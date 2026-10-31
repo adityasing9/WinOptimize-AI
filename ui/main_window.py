@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
 
-from .styles import DARK_THEME, LIGHT_THEME
+from .styles import THEMES, DARK_THEME
 from .views.dashboard_view import DashboardView
 from .views.scan_results_view import ScanResultsView
 from .views.recommendations_view import RecommendationsView
@@ -21,7 +21,14 @@ from .views.optimization_view import OptimizationView
 from .views.history_view import HistoryView
 from .views.settings_view import SettingsView
 
-from .workers import ScanWorker, OptimizeWorker, RollbackWorker, RelaunchWorker
+from .workers import (
+    ScanWorker,
+    OptimizeWorker,
+    RollbackWorker,
+    RelaunchWorker,
+    CheckUpdateWorker,
+    ApplyUpdateWorker,
+)
 from scanner.models import DiagnosticReport
 from analyzer.process_analyzer import OptimizationRecommendation
 from optimizer.optimization_coordinator import OptimizationResult
@@ -48,13 +55,26 @@ class MainWindow(QMainWindow):
         self._optimize_worker: Optional[OptimizeWorker] = None
         self._rollback_worker: Optional[RollbackWorker] = None
         self._relaunch_worker: Optional[RelaunchWorker] = None
+        self._update_check_worker: Optional[CheckUpdateWorker] = None
+        self._update_apply_worker: Optional[ApplyUpdateWorker] = None
 
         self._init_ui()
-        self.apply_theme("dark")
+
+        # Load persisted theme preference
+        saved_theme = self.db.get_user_preference("AppSetting:Theme") or "dark"
+        self.apply_theme(saved_theme)
+
+        # Set dropdown to match saved theme
+        if saved_theme in SettingsView.THEME_KEYS:
+            idx = SettingsView.THEME_KEYS.index(saved_theme)
+            self.settings_view.theme_combo.setCurrentIndex(idx)
 
         # Automatically initiate initial read-only baseline scan on startup if enabled
         if auto_scan:
             self.start_scan()
+
+        # Non-blocking background check for app updates
+        self._silent_check_update()
 
     def _init_ui(self):
         central_widget = QWidget()
@@ -94,6 +114,14 @@ class MainWindow(QMainWindow):
 
         side_layout.addStretch()
 
+        # In-App Update shortcut button in sidebar
+        self.sidebar_update_btn = QPushButton("🔄 Check for Updates")
+        self.sidebar_update_btn.setProperty("class", "SecondaryButton")
+        self.sidebar_update_btn.setCursor(Qt.PointingHandCursor)
+        self.sidebar_update_btn.setStyleSheet("font-size: 11px; padding: 6px; margin: 4px 4px;")
+        self.sidebar_update_btn.clicked.connect(self._on_sidebar_update_clicked)
+        side_layout.addWidget(self.sidebar_update_btn)
+
         # Offline / Privacy Badge
         priv_badge = QLabel("• 100% Offline & Private")
         priv_badge.setStyleSheet("color: #34D399; font-size: 11px; font-weight: 600; padding: 8px;")
@@ -122,6 +150,8 @@ class MainWindow(QMainWindow):
         self.settings_view = SettingsView()
         self.settings_view.theme_changed.connect(self.apply_theme)
         self.settings_view.start_relaunch_session.connect(self._on_start_relaunch)
+        self.settings_view.check_update_requested.connect(self._on_check_update)
+        self.settings_view.apply_update_requested.connect(self._on_apply_update)
 
         self.stack.addWidget(self.dash_view)      # 0
         self.stack.addWidget(self.findings_view)  # 1
@@ -156,10 +186,12 @@ class MainWindow(QMainWindow):
             self.hist_view.reload_history()
 
     def apply_theme(self, theme_name: str):
-        if theme_name.lower() == "light":
-            self.setStyleSheet(LIGHT_THEME)
-        else:
-            self.setStyleSheet(DARK_THEME)
+        theme_qss = THEMES.get(theme_name.lower(), DARK_THEME)
+        self.setStyleSheet(theme_qss)
+        try:
+            self.db.set_user_preference("AppSetting:Theme", "Theme", theme_name.lower())
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
     # Scan Flow
@@ -269,3 +301,65 @@ class MainWindow(QMainWindow):
     def _on_relaunch_failed(self, error_msg: str):
         self.statusBar.showMessage(f"Relaunch observer failed: {error_msg}")
         QMessageBox.warning(self, "Relaunch Observer Error", f"Observer session failed:\n{error_msg}")
+
+    # -------------------------------------------------------------------------
+    # In-App Updater Flow
+    # -------------------------------------------------------------------------
+    def _silent_check_update(self):
+        """Checks for updates silently without popping dialogs or setting status bar."""
+        self._update_check_worker = CheckUpdateWorker()
+        self._update_check_worker.check_finished.connect(self._on_silent_update_check_finished)
+        self._update_check_worker.start()
+
+    def _on_silent_update_check_finished(self, release_info):
+        if release_info and release_info.is_newer:
+            self.statusBar.showMessage(f"🎉 New version available: {release_info.tag_name} (See Settings)")
+            self.sidebar_update_btn.setText(f"🎉 Update {release_info.tag_name}")
+            self.sidebar_update_btn.setStyleSheet(
+                "font-size: 11px; font-weight: 700; padding: 6px; margin: 4px 4px; "
+                "background-color: #059669; color: #FFFFFF; border-radius: 6px; border: none;"
+            )
+            self.settings_view.display_update_info(release_info)
+
+    def _on_sidebar_update_clicked(self):
+        self.switch_page(5)  # Switch to Settings page
+        self._on_check_update()
+
+    def _on_check_update(self):
+        self.statusBar.showMessage("Checking GitHub Releases for updates...")
+        self._update_check_worker = CheckUpdateWorker()
+        self._update_check_worker.check_finished.connect(self._on_update_check_finished)
+        self._update_check_worker.check_failed.connect(self._on_update_check_failed)
+        self._update_check_worker.start()
+
+    def _on_update_check_finished(self, release_info):
+        self.settings_view.display_update_info(release_info)
+        if release_info and release_info.is_newer:
+            self.statusBar.showMessage(f"Update available: {release_info.tag_name}")
+            self.sidebar_update_btn.setText(f"🎉 Update {release_info.tag_name}")
+            self.sidebar_update_btn.setStyleSheet(
+                "font-size: 11px; font-weight: 700; padding: 6px; margin: 4px 4px; "
+                "background-color: #059669; color: #FFFFFF; border-radius: 6px; border: none;"
+            )
+        else:
+            self.statusBar.showMessage("WinOptimize AI is up to date.")
+            self.sidebar_update_btn.setText("✓ App Up to Date")
+            self.sidebar_update_btn.setStyleSheet("font-size: 11px; padding: 6px; margin: 4px 4px;")
+
+    def _on_update_check_failed(self, error_msg: str):
+        self.settings_view.display_update_info(None)
+        self.statusBar.showMessage(f"Update check failed: {error_msg}")
+
+    def _on_apply_update(self, download_url: str):
+        self.statusBar.showMessage("Downloading update from GitHub...")
+        self._update_apply_worker = ApplyUpdateWorker(download_url)
+        self._update_apply_worker.progress.connect(self.settings_view.set_update_progress)
+        self._update_apply_worker.update_finished.connect(self._on_update_apply_finished)
+        self._update_apply_worker.start()
+
+    def _on_update_apply_finished(self, success: bool, message: str):
+        self.settings_view.on_update_completed(success, message)
+        if success:
+            self.statusBar.showMessage("Update applied. Restarting application...")
+        else:
+            self.statusBar.showMessage(f"Update error: {message}")

@@ -6,6 +6,7 @@ Never deletes registry entries, never deletes scheduled tasks, never deletes ser
 
 from __future__ import annotations
 import abc
+import base64
 import datetime
 import logging
 import os
@@ -166,7 +167,7 @@ class StartupRegistryModifier(BaseModifier):
 
 class ScheduledTaskModifier(BaseModifier):
     """
-    Manages scheduled tasks via Disable-ScheduledTask and Enable-ScheduledTask.
+    Manages scheduled tasks via Disable-ScheduledTask, schtasks.exe, and elevated UAC fallback.
     Never deletes or unregisters tasks.
     """
 
@@ -180,10 +181,19 @@ class ScheduledTaskModifier(BaseModifier):
         )
         return proc.returncode, proc.stdout + proc.stderr
 
+    def _run_elevated_ps(self, script: str) -> Tuple[int, str]:
+        """Runs a PowerShell script with elevated Administrator UAC privileges using UTF-16LE Base64."""
+        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+        elev_cmd = (
+            f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
+            f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}'"
+        )
+        return self._run_ps(elev_cmd)
+
     def capture_current_state(self, target_identifier: str, params: Dict[str, Any]) -> Dict[str, Any]:
         task_name = params.get("task_name", "")
         task_path = params.get("task_path", "\\")
-        cmd = f"(Get-ScheduledTask -TaskName '{task_name}' -TaskPath '{task_path}' -ErrorAction SilentlyContinue).State.ToString()"
+        cmd = f"(Get-ScheduledTask -TaskName '{task_name}' -ErrorAction SilentlyContinue).State.ToString()"
         rc, out = self._run_ps(cmd)
         state = out.strip() if rc == 0 and out.strip() else "Ready"
         return {
@@ -195,50 +205,97 @@ class ScheduledTaskModifier(BaseModifier):
     def apply_modification(self, target_identifier: str, params: Dict[str, Any]) -> bool:
         task_name = params.get("task_name", "")
         task_path = params.get("task_path", "\\")
-        cmd = f"Disable-ScheduledTask -TaskName '{task_name}' -TaskPath '{task_path}' -ErrorAction Stop"
+
+        # 1. Standard un-elevated attempt via Disable-ScheduledTask
+        cmd = f"Disable-ScheduledTask -TaskName '{task_name}' -ErrorAction Stop"
         rc, out = self._run_ps(cmd)
-        if rc == 0:
-            logger.info("Successfully disabled scheduled task '%s'", task_name)
+        if rc == 0 and self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Disabled"}):
+            logger.info("Successfully disabled scheduled task '%s' via PowerShell", task_name)
             return True
 
-        # If access is denied (e.g. task requires RunLevel: Highest / Admin), attempt elevated invocation via RunAs
-        if "access is denied" in out.lower() or "permission" in out.lower() or "unauthorized" in out.lower():
-            logger.info("Access denied for scheduled task '%s'; attempting elevated RunAs invocation...", task_name)
-            elev_ps = f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile -Command Disable-ScheduledTask -TaskName \\\"{task_name}\\\" -TaskPath \\\"{task_path}\\\"' "
-            self._run_ps(elev_ps)
-            if self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Disabled"}):
-                logger.info("Elevated task disable succeeded for '%s'", task_name)
-                return True
+        # 2. Standard un-elevated attempt via schtasks.exe
+        sch_cmd = f'schtasks.exe /change /tn "{task_name}" /disable'
+        rc_sch, out_sch = self._run_ps(sch_cmd)
+        if rc_sch == 0 and self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Disabled"}):
+            logger.info("Successfully disabled scheduled task '%s' via schtasks", task_name)
+            return True
 
-        logger.error("Failed to disable scheduled task '%s': %s", task_name, out)
+        # 3. If access is denied (e.g. task requires RunLevel: Highest / Admin), invoke elevated UAC RunAs
+        logger.info("Access denied for scheduled task '%s'; launching elevated UAC prompt...", task_name)
+        elev_script = f"""
+try {{
+    Disable-ScheduledTask -TaskName '{task_name}' -ErrorAction Stop
+}} catch {{
+    & schtasks.exe /change /tn "{task_name}" /disable
+}}
+"""
+        self._run_elevated_ps(elev_script)
+        if self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Disabled"}):
+            logger.info("Elevated task disable succeeded for '%s'", task_name)
+            return True
+
+        logger.error("Failed to disable scheduled task '%s': %s | %s", task_name, out, out_sch)
         return False
 
     def verify_state(self, target_identifier: str, expected_state: Dict[str, Any]) -> bool:
         task_name = expected_state.get("task_name", "")
-        task_path = expected_state.get("task_path", "\\")
-        expected_st = expected_state.get("state", "Disabled")
-        cmd = f"(Get-ScheduledTask -TaskName '{task_name}' -TaskPath '{task_path}' -ErrorAction SilentlyContinue).State.ToString()"
+        expected_st = expected_state.get("state", "Disabled").lower()
+
+        # Check using PowerShell CIM/Get-ScheduledTask
+        cmd = f"(Get-ScheduledTask -TaskName '{task_name}' -ErrorAction SilentlyContinue).State.ToString()"
         rc, out = self._run_ps(cmd)
-        return rc == 0 and out.strip().lower() == expected_st.lower()
+        curr_state = out.strip().lower()
+        if rc == 0 and curr_state:
+            if expected_st == "disabled":
+                return curr_state == "disabled"
+            else:
+                return curr_state in ("ready", "running")
+
+        # Fallback query via native schtasks.exe
+        sch_cmd = f'schtasks.exe /query /tn "{task_name}" /fo CSV /nh'
+        rc_s, out_s = self._run_ps(sch_cmd)
+        if rc_s == 0 and out_s:
+            out_lower = out_s.lower()
+            if expected_st == "disabled":
+                return "disabled" in out_lower
+            else:
+                return "ready" in out_lower or "running" in out_lower
+
+        return False
 
     def revert_modification(self, target_identifier: str, original_state: Dict[str, Any]) -> bool:
         task_name = original_state.get("task_name", "")
         task_path = original_state.get("task_path", "\\")
-        cmd = f"Enable-ScheduledTask -TaskName '{task_name}' -TaskPath '{task_path}' -ErrorAction Stop"
+
+        # 1. Standard attempt via Enable-ScheduledTask
+        cmd = f"Enable-ScheduledTask -TaskName '{task_name}' -ErrorAction Stop"
         rc, out = self._run_ps(cmd)
-        if rc == 0:
-            logger.info("Successfully re-enabled scheduled task '%s'", task_name)
+        if rc == 0 and self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Ready"}):
+            logger.info("Successfully re-enabled scheduled task '%s' via PowerShell", task_name)
             return True
 
-        if "access is denied" in out.lower() or "permission" in out.lower() or "unauthorized" in out.lower():
-            logger.info("Access denied for re-enabling task '%s'; attempting elevated RunAs invocation...", task_name)
-            elev_ps = f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile -Command Enable-ScheduledTask -TaskName \\\"{task_name}\\\" -TaskPath \\\"{task_path}\\\"' "
-            self._run_ps(elev_ps)
-            if self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Ready"}):
-                logger.info("Elevated task re-enable succeeded for '%s'", task_name)
-                return True
+        # 2. Standard attempt via schtasks.exe
+        sch_cmd = f'schtasks.exe /change /tn "{task_name}" /enable'
+        rc_sch, out_sch = self._run_ps(sch_cmd)
+        if rc_sch == 0 and self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Ready"}):
+            logger.info("Successfully re-enabled scheduled task '%s' via schtasks", task_name)
+            return True
 
-        logger.error("Failed to re-enable scheduled task '%s': %s", task_name, out)
+        # 3. Elevated UAC fallback
+        logger.info("Access denied for re-enabling task '%s'; launching elevated UAC prompt...", task_name)
+        elev_script = f"""
+try {{
+    Enable-ScheduledTask -TaskName '{task_name}' -ErrorAction Stop
+}} catch {{
+    & schtasks.exe /change /tn "{task_name}" /enable
+}}
+"""
+        self._run_elevated_ps(elev_script)
+        if self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Ready"}):
+            logger.info("Elevated task re-enable succeeded for '%s'", task_name)
+            return True
+
+        logger.error("Failed to re-enable scheduled task '%s': %s | %s", task_name, out, out_sch)
         return False
 
 
@@ -258,6 +315,14 @@ class ServiceModifier(BaseModifier):
         )
         return proc.returncode, proc.stdout + proc.stderr
 
+    def _run_elevated_ps(self, script: str) -> Tuple[int, str]:
+        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+        elev_cmd = (
+            f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
+            f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}'"
+        )
+        return self._run_ps(elev_cmd)
+
     def capture_current_state(self, target_identifier: str, params: Dict[str, Any]) -> Dict[str, Any]:
         svc_name = params.get("service_name", "")
         cmd = f"(Get-Service -Name '{svc_name}' -ErrorAction SilentlyContinue).StartType.ToString()"
@@ -273,7 +338,13 @@ class ServiceModifier(BaseModifier):
         target_mode = params.get("target_mode", "Manual")
         cmd = f"Set-Service -Name '{svc_name}' -StartupType {target_mode} -ErrorAction Stop"
         rc, out = self._run_ps(cmd)
-        return rc == 0
+        if rc == 0 and self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode}):
+            return True
+
+        # Elevated fallback
+        elev_script = f"Set-Service -Name '{svc_name}' -StartupType {target_mode} -ErrorAction Stop"
+        self._run_elevated_ps(elev_script)
+        return self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode})
 
     def verify_state(self, target_identifier: str, expected_state: Dict[str, Any]) -> bool:
         svc_name = expected_state.get("service_name", "")
@@ -287,4 +358,9 @@ class ServiceModifier(BaseModifier):
         orig_mode = original_state.get("start_mode", "Automatic")
         cmd = f"Set-Service -Name '{svc_name}' -StartupType {orig_mode} -ErrorAction Stop"
         rc, out = self._run_ps(cmd)
-        return rc == 0
+        if rc == 0 and self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": orig_mode}):
+            return True
+
+        elev_script = f"Set-Service -Name '{svc_name}' -StartupType {orig_mode} -ErrorAction Stop"
+        self._run_elevated_ps(elev_script)
+        return self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": orig_mode})

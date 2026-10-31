@@ -105,3 +105,45 @@ class RelaunchWorker(QThread):
         except Exception as e:
             logger.error("Relaunch worker exception: %s", e)
             self.relaunch_failed.emit(str(e))
+
+
+class CheckUpdateWorker(QThread):
+    """Checks for latest releases on GitHub in background."""
+    check_finished = Signal(object)  # ReleaseInfo or None
+    check_failed = Signal(str)
+
+    def run(self):
+        try:
+            from updater.in_app_updater import InAppUpdater
+            updater = InAppUpdater()
+            info = updater.check_for_updates()
+            self.check_finished.emit(info)
+        except Exception as e:
+            logger.error("Check update worker error: %s", e)
+            self.check_failed.emit(str(e))
+
+
+class ApplyUpdateWorker(QThread):
+    """Downloads update and applies in-place restart."""
+    progress = Signal(int)
+    update_finished = Signal(bool, str)
+
+    def __init__(self, download_url: str):
+        super().__init__()
+        self.download_url = download_url
+
+    def run(self):
+        try:
+            from updater.in_app_updater import InAppUpdater
+            updater = InAppUpdater()
+            ok = updater.download_and_apply_update(
+                self.download_url,
+                progress_callback=lambda pct: self.progress.emit(pct),
+            )
+            if ok:
+                self.update_finished.emit(True, "Update downloaded successfully!")
+            else:
+                self.update_finished.emit(False, "Update download failed.")
+        except Exception as e:
+            logger.error("Apply update error: %s", e)
+            self.update_finished.emit(False, str(e))
