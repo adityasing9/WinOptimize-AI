@@ -51,6 +51,13 @@ WinOptimize AI is **not** a generic RAM cleaner or an aggressive script that bli
 5. **100% Offline & Private**:
    - No cloud backends, no telemetry, no tracking. All data is stored locally in `winop.db`.
 
+6. **In-App Self-Updating Engine**:
+   - Automatically checks for updates from GitHub Releases directly inside the app.
+   - 1-click download with progress bar and atomic, safe restart without manual browser downloads.
+
+7. **12 Modern Color Themes**:
+   - Tailor the interface to your taste with Dark Fluent, Midnight OLED, Nordic Cobalt, Emerald Forest, Sunset Amber, Cyberpunk Neon, Dracula, Crimson Red, Tokyo Night, Solarized Dark, Rosé Pine, and Modern Light.
+
 ---
 
 ## Project Structure
