@@ -21,15 +21,6 @@ irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Ge
 
 ---
 
-## 📦 Downloads & Releases
-
-Pre-packaged standalone Windows desktop applications are available in **[GitHub Releases](https://github.com/adityasing9/WinOptimize-AI/releases/latest)**:
-
-* **[WinOptimizeAI-v1.0.0-windows-x64.zip](https://github.com/adityasing9/WinOptimize-AI/releases/download/v1.0.0/WinOptimizeAI-v1.0.0-windows-x64.zip)** *(Standalone portable app — extract and launch `WinOptimizeAI.exe`)*
-* **[WinOptimizeAI.exe](https://github.com/adityasing9/WinOptimize-AI/releases/download/v1.0.0/WinOptimizeAI.exe)** *(Direct binary executable)*
-
----
-
 ## The Core Workflow
 
 $$\textbf{Scan} \longrightarrow \textbf{Analyze} \longrightarrow \textbf{Recommend} \longrightarrow \textbf{Optimize} \longrightarrow \textbf{Verify} \longrightarrow \textbf{Restore}$$
