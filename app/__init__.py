@@ -1,0 +1,3 @@
+"""
+WinOptimize AI - Application Package
+"""

@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+build/
+dist/
+*.manifest
+*.spec.bak
+
+# Local Database & Reports
+*.db
+reports/*.json
+reports/*.md
+
+# Virtual environments
+venv/
+env/
+.venv/
