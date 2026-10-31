@@ -2,10 +2,31 @@
 
 > A lightweight, intelligent Windows desktop utility that helps users identify and safely reduce unnecessary background activity, excessive startup applications, redundant scheduled tasks, and applications that repeatedly relaunch.
 
+[![Release](https://img.shields.io/github/v/release/adityasing9/WinOptimize-AI?color=blue&label=Release)](https://github.com/adityasing9/WinOptimize-AI/releases/latest)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt-green.svg)](https://www.qt.io/)
 [![Safety](https://img.shields.io/badge/Safety-Protected%20Policy%20Enforced-brightgreen.svg)](docs/SAFETY_POLICY.md)
 [![Privacy](https://img.shields.io/badge/Privacy-100%25%20Offline-blueviolet.svg)](docs/SAFETY_POLICY.md)
+
+---
+
+## ⚡ Quick Run (PowerShell Direct One-Liner)
+
+You can run the read-only system inspection script directly from PowerShell without installing or cloning anything:
+
+```powershell
+irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Get-WinOpDiagnostics.ps1 | iex
+```
+*Direct script file in repository:* **[`scripts/Get-WinOpDiagnostics.ps1`](https://github.com/adityasing9/WinOptimize-AI/blob/main/scripts/Get-WinOpDiagnostics.ps1)**
+
+---
+
+## 📦 Downloads & Releases
+
+Pre-packaged standalone Windows desktop applications are available in **[GitHub Releases](https://github.com/adityasing9/WinOptimize-AI/releases/latest)**:
+
+* **[WinOptimizeAI-v1.0.0-windows-x64.zip](https://github.com/adityasing9/WinOptimize-AI/releases/download/v1.0.0/WinOptimizeAI-v1.0.0-windows-x64.zip)** *(Standalone portable app — extract and launch `WinOptimizeAI.exe`)*
+* **[WinOptimizeAI.exe](https://github.com/adityasing9/WinOptimize-AI/releases/download/v1.0.0/WinOptimizeAI.exe)** *(Direct binary executable)*
 
 ---
 
@@ -84,20 +105,30 @@ WinOp/
 
 ---
 
-## Quick Start
+## Usage Guide
 
 ### 1. Launch the Desktop Application
 ```powershell
 python app/main.py
 ```
+Or launch the pre-packaged `WinOptimizeAI.exe`.
 
-### 2. Run the CLI Diagnostic Scanner (Read-Only)
+### 2. Run the PowerShell Inspection Script Locally
+```powershell
+pwsh -ExecutionPolicy Bypass -File scripts/Get-WinOpDiagnostics.ps1 -OutputPath reports/diagnostic_report.json
+```
+Or run directly via GitHub without downloading:
+```powershell
+irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Get-WinOpDiagnostics.ps1 | iex
+```
+
+### 3. Run the CLI Python Diagnostic Runner
 ```powershell
 python -m scanner.diagnostic_runner --output-dir reports
 ```
 This generates a structured JSON report (`reports/diagnostic_report_*.json`) and a readable Markdown summary (`reports/diagnostic_summary_*.md`).
 
-### 3. Run the Automated Test Suite
+### 4. Run the Automated Test Suite
 ```powershell
 python -m unittest discover tests
 ```
@@ -106,12 +137,12 @@ python -m unittest discover tests
 
 ## Standalone Executable Build
 
-A pre-packaged Windows executable is located at:
+A pre-packaged Windows executable is located in:
 ```
 dist/WinOptimizeAI/WinOptimizeAI.exe
 ```
 
-To re-build the executable:
+To re-build the executable locally:
 ```powershell
 python packaging/build_exe.py
 ```
