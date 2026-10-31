@@ -200,6 +200,16 @@ class ScheduledTaskModifier(BaseModifier):
         if rc == 0:
             logger.info("Successfully disabled scheduled task '%s'", task_name)
             return True
+
+        # If access is denied (e.g. task requires RunLevel: Highest / Admin), attempt elevated invocation via RunAs
+        if "access is denied" in out.lower() or "permission" in out.lower() or "unauthorized" in out.lower():
+            logger.info("Access denied for scheduled task '%s'; attempting elevated RunAs invocation...", task_name)
+            elev_ps = f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile -Command Disable-ScheduledTask -TaskName \\\"{task_name}\\\" -TaskPath \\\"{task_path}\\\"' "
+            self._run_ps(elev_ps)
+            if self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Disabled"}):
+                logger.info("Elevated task disable succeeded for '%s'", task_name)
+                return True
+
         logger.error("Failed to disable scheduled task '%s': %s", task_name, out)
         return False
 
@@ -219,6 +229,15 @@ class ScheduledTaskModifier(BaseModifier):
         if rc == 0:
             logger.info("Successfully re-enabled scheduled task '%s'", task_name)
             return True
+
+        if "access is denied" in out.lower() or "permission" in out.lower() or "unauthorized" in out.lower():
+            logger.info("Access denied for re-enabling task '%s'; attempting elevated RunAs invocation...", task_name)
+            elev_ps = f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile -Command Enable-ScheduledTask -TaskName \\\"{task_name}\\\" -TaskPath \\\"{task_path}\\\"' "
+            self._run_ps(elev_ps)
+            if self.verify_state(target_identifier, {"task_name": task_name, "task_path": task_path, "state": "Ready"}):
+                logger.info("Elevated task re-enable succeeded for '%s'", task_name)
+                return True
+
         logger.error("Failed to re-enable scheduled task '%s': %s", task_name, out)
         return False
 

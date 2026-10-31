@@ -86,7 +86,7 @@ class OptimizationView(QWidget):
         bottom_layout = QHBoxLayout()
         bottom_layout.addStretch()
 
-        self.history_btn = QPushButton("View Change History & Restore")
+        self.history_btn = QPushButton("View Change History && Restore")
         self.history_btn.setProperty("class", "SecondaryButton")
         self.history_btn.clicked.connect(self.view_history_requested.emit)
         bottom_layout.addWidget(self.history_btn)
@@ -130,7 +130,7 @@ class OptimizationView(QWidget):
         self.results_table.setRowCount(len(results))
         for row, res in enumerate(results):
             self.results_table.setItem(row, 0, QTableWidgetItem(res.component_name))
-            self.results_table.setItem(row, 1, QTableWidgetItem("Disabled in StartupApproved"))
+            self.results_table.setItem(row, 1, QTableWidgetItem(res.action_name or "Optimized"))
             self.results_table.setItem(row, 2, QTableWidgetItem(res.snapshot_id))
 
             status_str = "Verified & Applied" if (res.success and res.verified) else "Failed / Reverted"

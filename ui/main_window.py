@@ -85,8 +85,8 @@ class MainWindow(QMainWindow):
         self.btn_findings = self._create_nav_button("  Findings", 1)
         self.btn_recs = self._create_nav_button("  Recommendations", 2)
         self.btn_opt = self._create_nav_button("  Optimization", 3)
-        self.btn_hist = self._create_nav_button("  History & Restore", 4)
-        self.btn_set = self._create_nav_button("  Settings & Observer", 5)
+        self.btn_hist = self._create_nav_button("  History && Restore", 4)
+        self.btn_set = self._create_nav_button("  Settings && Observer", 5)
 
         for btn in [self.btn_dash, self.btn_findings, self.btn_recs, self.btn_opt, self.btn_hist, self.btn_set]:
             side_layout.addWidget(btn)

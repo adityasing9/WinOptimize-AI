@@ -30,6 +30,7 @@ class OptimizationResult:
     recommendation_id: str
     component_name: str
     target_identifier: str
+    action_name: str
     success: bool
     verified: bool
     snapshot_id: str
@@ -85,6 +86,7 @@ class OptimizationCoordinator:
                         recommendation_id=rec.recommendation_id,
                         component_name=rec.component_name,
                         target_identifier=rec.target_identifier,
+                        action_name=rec.recommended_action,
                         success=False,
                         verified=False,
                         snapshot_id="",
@@ -100,6 +102,7 @@ class OptimizationCoordinator:
                         recommendation_id=rec.recommendation_id,
                         component_name=rec.component_name,
                         target_identifier=rec.target_identifier,
+                        action_name=rec.recommended_action,
                         success=False,
                         verified=False,
                         snapshot_id="",
@@ -133,6 +136,7 @@ class OptimizationCoordinator:
                         recommendation_id=rec.recommendation_id,
                         component_name=rec.component_name,
                         target_identifier=rec.target_identifier,
+                        action_name=rec.recommended_action,
                         success=False,
                         verified=False,
                         snapshot_id="",
@@ -158,6 +162,7 @@ class OptimizationCoordinator:
                         recommendation_id=rec.recommendation_id,
                         component_name=rec.component_name,
                         target_identifier=rec.target_identifier,
+                        action_name=rec.recommended_action,
                         success=False,
                         verified=False,
                         snapshot_id=snapshot_id,
@@ -181,6 +186,7 @@ class OptimizationCoordinator:
                         recommendation_id=rec.recommendation_id,
                         component_name=rec.component_name,
                         target_identifier=rec.target_identifier,
+                        action_name=rec.recommended_action,
                         success=True,
                         verified=True,
                         snapshot_id=snapshot_id,
@@ -197,6 +203,7 @@ class OptimizationCoordinator:
                         recommendation_id=rec.recommendation_id,
                         component_name=rec.component_name,
                         target_identifier=rec.target_identifier,
+                        action_name=rec.recommended_action,
                         success=False,
                         verified=False,
                         snapshot_id=snapshot_id,
