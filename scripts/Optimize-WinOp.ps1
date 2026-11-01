@@ -45,7 +45,7 @@ function Invoke-ElevatedPowerShell {
     $bytes = [System.Text.Encoding]::Unicode.GetBytes($Script)
     $encoded = [System.Convert]::ToBase64String($bytes)
     $proc = Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
-    return $proc.ExitCode
+    $null = $proc.ExitCode
 }
 
 # Load existing snapshots
@@ -219,17 +219,27 @@ $knownTasks = @(
 )
 
 foreach ($tMeta in $knownTasks) {
-    $t = Get-ScheduledTask -TaskName $tMeta.Name -TaskPath $tMeta.Path -ErrorAction SilentlyContinue
-    if (-not $t) { $t = Get-ScheduledTask -TaskName $tMeta.Name -ErrorAction SilentlyContinue }
-    if ($t -and $t.State -ne "Disabled") {
-        $taskPath = if ($t.TaskPath) { $t.TaskPath } else { $tMeta.Path }
+    $fullP = if ($tMeta.Path -eq "\") { "\$($tMeta.Name)" } else { "$($tMeta.Path)$($tMeta.Name)" }
+    $qOut = schtasks.exe /query /tn "$fullP" /fo CSV 2>$null | Out-String
+    $isDisabled = ($qOut -match "Disabled")
+
+    if (-not $isDisabled) {
+        $t = Get-ScheduledTask -TaskName $tMeta.Name -TaskPath $tMeta.Path -ErrorAction SilentlyContinue
+        if (-not $t) { $t = Get-ScheduledTask -TaskName $tMeta.Name -ErrorAction SilentlyContinue }
+        if ($t -and $t.State -eq "Disabled") {
+            $isDisabled = $true
+        }
+    }
+
+    if (-not $isDisabled -and ($qOut.Trim() -or $t)) {
+        $taskPath = if ($t -and $t.TaskPath) { $t.TaskPath } else { $tMeta.Path }
         $candidates.Add([PSCustomObject]@{
             Category          = "ScheduledTask"
-            TargetName        = $t.TaskName
-            DisplayName       = "$($t.TaskName) Task"
+            TargetName        = $tMeta.Name
+            DisplayName       = "$($tMeta.Name) Task"
             CurrentAction     = "Disable scheduled task"
             Reason            = "OEM telemetry / updater scheduled task"
-            OriginalState     = @{ TaskPath = $taskPath; State = $t.State.ToString() }
+            OriginalState     = @{ TaskPath = $taskPath }
             RequiresElevation = $true
         })
     }
@@ -352,11 +362,11 @@ foreach ($idx in $selectedIndices) {
             net stop "$($c.TargetName)" 2>$null | Out-Null
 
             # 3. Check verification
-            $updated = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
-            $isDone = ($updated -and ($updated.StartType -eq "Manual" -or $updated.Status -eq "Stopped"))
+            $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
+            $isDone = ($regProps -and ($regProps.Start -eq 3 -or $regProps.Start -eq 4))
             if (-not $isDone) {
-                $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
-                if ($regProps -and ($regProps.Start -eq 3 -or $regProps.Start -eq 4)) {
+                $updated = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
+                if ($updated -and ($updated.StartType -eq "Manual" -or $updated.StartType -eq "Disabled")) {
                     $isDone = $true
                 }
             }
@@ -370,13 +380,13 @@ Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue
 & sc.exe config '$($c.TargetName)' start= demand
 & net stop '$($c.TargetName)'
 "@
-                Invoke-ElevatedPowerShell -Script $elevScript
-                $updated2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
-                if ($updated2 -and ($updated2.StartType -eq "Manual" -or $updated2.Status -eq "Stopped")) {
+                $null = Invoke-ElevatedPowerShell -Script $elevScript
+                $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
+                if ($regProps2 -and ($regProps2.Start -eq 3 -or $regProps2.Start -eq 4)) {
                     $isDone = $true
                 } else {
-                    $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
-                    if ($regProps2 -and ($regProps2.Start -eq 3 -or $regProps2.Start -eq 4)) {
+                    $updated2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
+                    if ($updated2 -and ($updated2.StartType -eq "Manual" -or $updated2.StartType -eq "Disabled")) {
                         $isDone = $true
                     }
                 }
@@ -387,18 +397,24 @@ Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue
             Save-SnapshotRecord -Record $snapRecord
             $taskPath = if ($c.OriginalState.TaskPath) { $c.OriginalState.TaskPath } else { "\" }
             if (-not $taskPath.EndsWith("\")) { $taskPath = "$taskPath\" }
-            $fullPath = if ($taskPath -eq "\") { $c.TargetName } else { "$taskPath$($c.TargetName)" }
+            $fullPath = if ($taskPath -eq "\") { "\$($c.TargetName)" } else { "$taskPath$($c.TargetName)" }
 
             # 1. Direct attempt
             Disable-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue 2>$null | Out-Null
             Disable-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue 2>$null | Out-Null
             schtasks.exe /change /tn "$fullPath" /disable 2>$null | Out-Null
+            schtasks.exe /end /tn "$fullPath" 2>$null | Out-Null
             schtasks.exe /change /tn "$($c.TargetName)" /disable 2>$null | Out-Null
+            schtasks.exe /end /tn "$($c.TargetName)" 2>$null | Out-Null
 
             # 2. Verify
-            $t = Get-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue
-            if (-not $t) { $t = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue }
-            $isTaskDisabled = ($t -and $t.State -eq "Disabled")
+            $qOut = schtasks.exe /query /tn "$fullPath" /fo CSV 2>$null | Out-String
+            $isTaskDisabled = ($qOut -match "Disabled")
+            if (-not $isTaskDisabled) {
+                $t = Get-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue
+                if (-not $t) { $t = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue }
+                $isTaskDisabled = ($t -and $t.State -eq "Disabled")
+            }
 
             # 3. Elevated fallback if needed via Base64 EncodedCommand
             if (-not $isTaskDisabled) {
@@ -407,12 +423,18 @@ Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue
 Disable-ScheduledTask -TaskName '$($c.TargetName)' -TaskPath '$taskPath' -ErrorAction SilentlyContinue
 Disable-ScheduledTask -TaskName '$($c.TargetName)' -ErrorAction SilentlyContinue
 & schtasks.exe /change /tn "$fullPath" /disable
+& schtasks.exe /end /tn "$fullPath"
 & schtasks.exe /change /tn "$($c.TargetName)" /disable
+& schtasks.exe /end /tn "$($c.TargetName)"
 "@
-                Invoke-ElevatedPowerShell -Script $elevTask
-                $t2 = Get-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue
-                if (-not $t2) { $t2 = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue }
-                $isTaskDisabled = ($t2 -and $t2.State -eq "Disabled")
+                $null = Invoke-ElevatedPowerShell -Script $elevTask
+                $qOut2 = schtasks.exe /query /tn "$fullPath" /fo CSV 2>$null | Out-String
+                $isTaskDisabled = ($qOut2 -match "Disabled")
+                if (-not $isTaskDisabled) {
+                    $t2 = Get-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue
+                    if (-not $t2) { $t2 = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue }
+                    $isTaskDisabled = ($t2 -and $t2.State -eq "Disabled")
+                }
             }
             $success = $isTaskDisabled
         }
