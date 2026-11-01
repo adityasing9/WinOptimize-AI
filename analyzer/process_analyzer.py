@@ -256,11 +256,9 @@ class ProcessAnalyzer:
                 )
                 recommendations.append(rec)
 
-        # 4. Analyze Non-Microsoft Background Services
+        # 4. Analyze Background Services (Gaming Services, VPNs, DBs, OEM telemetry, etc.)
         for svc in report.services_overview:
-            if svc.is_microsoft or svc.status.lower() != "running":
-                continue
-            if svc.start_mode.lower() == "manual":
+            if svc.start_mode.lower() in ("manual", "disabled"):
                 continue
 
             target_id = f"Service:{svc.name}"
@@ -274,23 +272,43 @@ class ProcessAnalyzer:
                 image_path=svc.binary_path,
             )
 
-            if eval_res.is_protected or not eval_res.is_matched:
+            # Never modify protected core system services
+            if eval_res.is_protected:
+                continue
+
+            if eval_res.is_matched:
+                title_str = eval_res.rule.title if eval_res.rule else f"Optional Service: {svc.display_name}"
+                desc_str = eval_res.explanation
+                action_str = eval_res.recommended_action
+                risk_lvl = eval_res.risk_level
+                conf_val = eval_res.confidence
+                side_fx = eval_res.side_effects
+                rev_info = eval_res.reversibility_info
+            elif not svc.is_microsoft and svc.status.lower() == "running":
+                # Running third-party non-core service with Automatic start mode
+                title_str = f"Optional Third-Party Service: {svc.display_name or svc.name}"
+                desc_str = f"Third-party background service '{svc.display_name or svc.name}' is running automatically at system boot."
+                action_str = "Set service startup type to Manual"
+                risk_lvl = RuleRiskLevel.CONDITIONAL
+                conf_val = 0.80
+                side_fx = "Service will start on-demand when the host application is launched."
+                rev_info = "Can be restored to Automatic via Services (services.msc) or WinOptimize."
+            else:
                 continue
 
             rec_id = f"REC-SVC-{uuid.uuid4().hex[:8].upper()}"
-            title_str = eval_res.rule.title if eval_res.rule else f"Optional Service: {svc.display_name}"
             rec = OptimizationRecommendation(
                 recommendation_id=rec_id,
                 category=RuleCategory.SERVICE.value,
                 component_name=svc.display_name or svc.name,
                 target_identifier=target_id,
-                risk_level=eval_res.risk_level,
-                confidence=eval_res.confidence,
+                risk_level=risk_lvl,
+                confidence=conf_val,
                 title=title_str,
-                description=eval_res.explanation,
-                recommended_action=eval_res.recommended_action,
-                side_effects=eval_res.side_effects,
-                reversibility_info=eval_res.reversibility_info,
+                description=desc_str,
+                recommended_action=action_str,
+                side_effects=side_fx,
+                reversibility_info=rev_info,
                 requires_elevation=True,
                 current_state={
                     "service_name": svc.name,

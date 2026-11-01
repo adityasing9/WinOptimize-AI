@@ -415,12 +415,17 @@ function Get-ServiceInspection {
         $cimServices = Get-CimInstance Win32_Service -ErrorAction Stop
         $usedCim = $true
         foreach ($svc in $cimServices) {
-            $isMicrosoft = $false
-            if ($svc.PathName -match "system32|syswow64|Microsoft" -or $svc.StartName -match "NT AUTHORITY") {
-                $isMicrosoft = $true
+            # Differentiate Windows core drivers vs optional/third-party services
+            $isCoreWindows = $false
+            if ($svc.PathName -match "\\\\Windows\\\\System32\\\\|\\\\Windows\\\\SysWOW64\\\\" -or $svc.PathName -match "/Windows/System32/|/Windows/SysWOW64/") {
+                if ($svc.Name -notmatch "GamingServices|Xbox" -and $svc.DisplayName -notmatch "Gaming|Xbox") {
+                    $isCoreWindows = $true
+                }
             }
+            $isMicrosoft = $isCoreWindows
 
-            if (-not $IncludeSystem -and $isMicrosoft) { continue }
+            # When not including full system, skip core Windows System32 drivers, but keep user/app services
+            if (-not $IncludeSystem -and $isCoreWindows) { continue }
 
             $serviceList.Add([PSCustomObject]@{
                 Name         = $svc.Name
@@ -458,9 +463,15 @@ function Get-ServiceInspection {
                 $disp = if ($props.DisplayName) { [string]$props.DisplayName } else { $entry.PSChildName }
                 $acct = if ($props.ObjectName) { [string]$props.ObjectName } else { "" }
 
-                $isMicrosoft = ($img -match "system32|syswow64|Microsoft" -or $acct -match "NT AUTHORITY|LocalSystem")
+                $isCoreWindows = $false
+                if ($img -match "system32|syswow64") {
+                    if ($entry.PSChildName -notmatch "GamingServices|Xbox" -and $disp -notmatch "Gaming|Xbox") {
+                        $isCoreWindows = $true
+                    }
+                }
+                $isMicrosoft = $isCoreWindows
 
-                if (-not $IncludeSystem -and $isMicrosoft) { continue }
+                if (-not $IncludeSystem -and $isCoreWindows) { continue }
 
                 $serviceList.Add([PSCustomObject]@{
                     Name         = $entry.PSChildName
@@ -562,6 +573,27 @@ function Get-OptimizationCandidates {
                     Reason            = "Background updater or reporting task configured to trigger automatically."
                     RecommendedAction = "Disable scheduled task (Disable-ScheduledTask)"
                     OriginalCommand   = if ($task.Actions) { ($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join "; " } else { "" }
+                    RequiresElevation = $true
+                })
+            }
+        }
+    }
+
+    # 4. Service Candidates (Running optional / third-party services set to Auto start)
+    foreach ($svc in $Services) {
+        if (($svc.Status -eq "Running" -or $svc.StartMode -eq "Auto") -and (-not $svc.IsMicrosoft)) {
+            $isKnownOptional = ($svc.Name -match "GamingServices|Xbox|Speedify|MongoDB|warp|Bonjour|ACCSvc" -or 
+                                $svc.DisplayName -match "Gaming Services|Xbox|Speedify|MongoDB|WARP|Bonjour|Acer Care")
+            if ($isKnownOptional -or ($svc.Status -eq "Running" -and $svc.StartMode -eq "Auto")) {
+                $candidates.Add([PSCustomObject]@{
+                    Category          = "Service"
+                    TargetName        = $svc.DisplayName
+                    Identifier        = "Service:$($svc.Name)"
+                    RiskLevel         = "CONDITIONAL"
+                    Confidence        = 0.85
+                    Reason            = "Background service '$($svc.DisplayName)' is running or configured to autostart at system boot."
+                    RecommendedAction = "Set service startup type to Manual (Set-Service -StartupType Manual)"
+                    OriginalCommand   = $svc.BinaryPath
                     RequiresElevation = $true
                 })
             }

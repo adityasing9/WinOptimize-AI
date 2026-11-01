@@ -11,7 +11,7 @@ import winreg
 from pathlib import Path
 
 from storage.database import DatabaseManager
-from optimizer.modifiers import StartupRegistryModifier
+from optimizer.modifiers import StartupRegistryModifier, ScheduledTaskModifier, ProcessModifier
 from backup.snapshot_manager import SnapshotManager
 from backup.rollback_orchestrator import RollbackOrchestrator
 from optimizer.optimization_coordinator import OptimizationCoordinator, OptimizationResult
@@ -169,6 +169,34 @@ class TestSafeOptimizerAndRollback(unittest.TestCase):
         # Check DB status updated to 'reverted'
         updated_snaps = self.db.get_snapshots_for_session(session_id)
         self.assertEqual(updated_snaps[0]["status"], "reverted")
+
+    def test_scheduled_task_subfolder_formatting(self):
+        """Verify that scheduled task paths and folder prefixes are correctly formed for schtasks and CIM."""
+        task_mod = ScheduledTaskModifier()
+        
+        # Folder task
+        clean_path, full_tn = task_mod._format_task_identifiers("JumpstartRuntimeTask", "\\Oem\\")
+        self.assertEqual(clean_path, "\\Oem\\")
+        self.assertEqual(full_tn, "\\Oem\\JumpstartRuntimeTask")
+
+        # Root task
+        clean_path_root, full_tn_root = task_mod._format_task_identifiers("App Explorer", "\\")
+        self.assertEqual(clean_path_root, "\\")
+        self.assertEqual(full_tn_root, "App Explorer")
+
+    def test_phone_link_background_registry_toggle(self):
+        """Verify that Phone Link process modifier persists Disabled flag in BackgroundAccessApplications."""
+        proc_mod = ProcessModifier()
+        reg_path = r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications\Microsoft.YourPhone_8wekyb3d8bbwe"
+
+        # Apply modification for phone host
+        proc_mod.apply_modification("PhoneExperienceHost", {"process_name": "PhoneExperienceHost", "pids": []})
+        
+        # Verify state succeeds
+        self.assertTrue(proc_mod.verify_state("PhoneExperienceHost", {"process_name": "PhoneExperienceHost"}))
+
+        # Revert modification
+        proc_mod.revert_modification("PhoneExperienceHost", {"process_name": "PhoneExperienceHost"})
 
 
 if __name__ == "__main__":

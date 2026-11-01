@@ -18,6 +18,7 @@ from scanner.models import (
     StartupFinding,
     ScheduledTaskFinding,
     ProcessFinding,
+    ServiceFinding,
 )
 
 
@@ -135,6 +136,30 @@ class TestRulesAndAnalyzer(unittest.TestCase):
         # App Explorer must be recommended under ScheduledTask
         self.assertIn("ScheduledTask", categories)
         self.assertIn("App Explorer", names)
+
+    def test_service_detection_gaming_speedify_warp_mongodb(self):
+        """Verify that Gaming Services, Speedify, WARP, and MongoDB are detected and recommended."""
+        report = DiagnosticReport(
+            services_overview=[
+                ServiceFinding(name="GamingServices", display_name="Gaming Services", status="Running", start_mode="Auto", is_microsoft=True),
+                ServiceFinding(name="Speedify", display_name="Speedify", status="Running", start_mode="Auto", is_microsoft=False),
+                ServiceFinding(name="CloudflareWARP", display_name="Cloudflare WARP", status="Running", start_mode="Auto", is_microsoft=False),
+                ServiceFinding(name="MongoDB", display_name="MongoDB Server", status="Running", start_mode="Auto", is_microsoft=False),
+                ServiceFinding(name="RpcSs", display_name="Remote Procedure Call (RPC)", status="Running", start_mode="Auto", is_microsoft=True),
+            ]
+        )
+
+        recs = self.analyzer.analyze(report)
+        svc_names = [r.component_name for r in recs if r.category == RuleCategory.SERVICE.value]
+
+        # RpcSs is core protected system service -> must NOT be present
+        self.assertNotIn("Remote Procedure Call (RPC)", svc_names)
+
+        # Gaming Services, Speedify, WARP, and MongoDB must all be detected
+        self.assertIn("Gaming Services", svc_names)
+        self.assertIn("Speedify", svc_names)
+        self.assertIn("Cloudflare WARP", svc_names)
+        self.assertIn("MongoDB Server", svc_names)
 
 
 if __name__ == "__main__":
