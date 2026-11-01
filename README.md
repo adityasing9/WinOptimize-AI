@@ -12,20 +12,28 @@
 
 ## ⚡ Quick Run (PowerShell Direct One-Liners)
 
-### 1. Read-Only Diagnostic Scan
+### 🚀 Interactive Terminal Optimizer (Instant 1-Liner)
+Safely disable background services, startup entries, scheduled tasks, or terminate memory hogs directly from PowerShell with automatic safety snapshots and 1-click instant rollback:
+```powershell
+irm is.gd/winoptimize | iex
+```
+> **Tip:** You can also run the full URL directly:
+> ```powershell
+> irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1 | iex
+> ```
+
+**Interactive Menu Options:**
+- `[A]` **Apply ALL Safe Recommendations** at once.
+- `[E]` **Relaunch as Administrator** (recommended to modify system services & scheduled tasks).
+- `[R]` **Instant Rollback** to restore all services, registry keys, and scheduled tasks to their original states.
+- `[1, 2, ...]` Optimize selected individual items by number.
+
+---
+
+### 🔍 Read-Only Diagnostic Scan
 Inspect system memory, running processes, startup apps, tasks, and services without making any modifications:
 ```powershell
 irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Get-WinOpDiagnostics.ps1 | iex
-```
-
-### 2. Interactive Terminal Optimizer (End Tasks & Disable Services/Apps)
-Safely disable background services, startup entries, scheduled tasks, or terminate memory hogs directly from PowerShell with automatic safety snapshots and 1-click instant rollback:
-```powershell
-irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1 | iex
-```
-*To instantly rollback changes applied from the terminal:*
-```powershell
-irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1 | iex -Rollback
 ```
 
 ---

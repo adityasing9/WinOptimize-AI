@@ -75,7 +75,7 @@ function Save-SnapshotRecord {
 # -----------------------------------------------------------------------------
 if ($Rollback) {
     Write-Host "==========================================================" -ForegroundColor Cyan
-    Write-Host "   WinOptimize AI — Terminal Rollback Engine              " -ForegroundColor Cyan
+    Write-Host "   WinOptimize AI - Terminal Rollback Engine              " -ForegroundColor Cyan
     Write-Host "==========================================================" -ForegroundColor Cyan
 
     $snaps = Get-SavedSnapshots
@@ -98,9 +98,9 @@ if ($Rollback) {
                 Write-Host " [RESTORED to $origMode]" -ForegroundColor Green
             }
             "ScheduledTask" {
-                $taskPath = if ($snap.OriginalState.TaskPath) { $snap.OriginalState.TaskPath } else { "\" }
-                if (-not $taskPath.EndsWith("\")) { $taskPath = "$taskPath\" }
-                $fullPath = if ($taskPath -eq "\") { "\$($snap.TargetName)" } else { "$taskPath$($snap.TargetName)" }
+                $taskPath = if ($snap.OriginalState.TaskPath) { $snap.OriginalState.TaskPath } else { '\' }
+                if (-not $taskPath.EndsWith('\')) { $taskPath = $taskPath + '\' }
+                $fullPath = if ($taskPath -eq '\') { '\' + $snap.TargetName } else { $taskPath + $snap.TargetName }
                 Enable-ScheduledTask -TaskName $snap.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue | Out-Null
                 schtasks.exe /change /tn "$fullPath" /enable 2>$null | Out-Null
                 Write-Host " [RE-ENABLED]" -ForegroundColor Green
@@ -122,7 +122,7 @@ if ($Rollback) {
         }
     }
     Remove-Item -Path $snapshotFile -Force -ErrorAction SilentlyContinue
-    Write-Host "[✓] Rollback completed successfully." -ForegroundColor Green
+    Write-Host "[+] Rollback completed successfully." -ForegroundColor Green
     if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
     return
 }
@@ -131,7 +131,7 @@ if ($Rollback) {
 # Diagnostic Scan for Optimization Candidates
 # -----------------------------------------------------------------------------
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "   WinOptimize AI — Interactive Terminal Optimizer        " -ForegroundColor Cyan
+Write-Host "   WinOptimize AI - Interactive Terminal Optimizer        " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 if (-not $isAdmin) {
@@ -242,15 +242,15 @@ if (Test-Path $startupKey) {
 
 # 3. Scheduled Tasks
 $knownTasks = @(
-    @{ Name = "App Explorer"; Path = "\" },
-    @{ Name = "AcerJumpstartTask"; Path = "\Oem\" },
-    @{ Name = "JumpstartAgentTask"; Path = "\Oem\" },
-    @{ Name = "JumpstartRuntimeTask"; Path = "\Oem\" },
-    @{ Name = "SoftLandingCreativeManagementTask"; Path = "\" }
+    @{ Name = "App Explorer"; Path = '\' },
+    @{ Name = "AcerJumpstartTask"; Path = '\Oem\' },
+    @{ Name = "JumpstartAgentTask"; Path = '\Oem\' },
+    @{ Name = "JumpstartRuntimeTask"; Path = '\Oem\' },
+    @{ Name = "SoftLandingCreativeManagementTask"; Path = '\' }
 )
 
 foreach ($tMeta in $knownTasks) {
-    $fullP = if ($tMeta.Path -eq "\") { "\$($tMeta.Name)" } else { "$($tMeta.Path)$($tMeta.Name)" }
+    $fullP = if ($tMeta.Path -eq '\') { '\' + $tMeta.Name } else { $tMeta.Path + $tMeta.Name }
     $qOut = schtasks.exe /query /tn "$fullP" /fo CSV 2>$null | Out-String
     $isDisabled = ($qOut -match "Disabled")
 
@@ -305,7 +305,7 @@ if ($braveProcs.Count -gt 5) {
 }
 
 if ($candidates.Count -eq 0) {
-    Write-Host "[✓] No redundant background processes, services, or tasks found! System is well-optimized." -ForegroundColor Green
+    Write-Host "[+] No redundant background processes, services, or tasks found! System is well-optimized." -ForegroundColor Green
     if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
     return
 }
@@ -345,7 +345,7 @@ if ($All) {
         Write-Host "[*] Relaunching in elevated Administrator PowerShell window..." -ForegroundColor Cyan
         $scriptUrl = "https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1?v=$(Get-Random)"
         Start-Process powershell -Verb RunAs -ArgumentList "-NoExit -ExecutionPolicy Bypass -Command `"irm '$scriptUrl' | iex`""
-        Write-Host "[✓] Elevated Administrator window launched. You can continue there." -ForegroundColor Green
+        Write-Host "[+] Elevated Administrator window launched. You can continue there." -ForegroundColor Green
         if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter in this window to finish..." }
         return
     }
@@ -460,9 +460,9 @@ $killCommands
         }
         "ScheduledTask" {
             Save-SnapshotRecord -Record $snapRecord
-            $taskPath = if ($c.OriginalState.TaskPath) { $c.OriginalState.TaskPath } else { "\" }
-            if (-not $taskPath.EndsWith("\")) { $taskPath = "$taskPath\" }
-            $fullPath = if ($taskPath -eq "\") { "\$($c.TargetName)" } else { "$taskPath$($c.TargetName)" }
+            $taskPath = if ($c.OriginalState.TaskPath) { $c.OriginalState.TaskPath } else { '\' }
+            if (-not $taskPath.EndsWith('\')) { $taskPath = $taskPath + '\' }
+            $fullPath = if ($taskPath -eq '\') { '\' + $c.TargetName } else { $taskPath + $c.TargetName }
 
             # 1. Direct attempt
             Disable-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue 2>$null | Out-Null
@@ -530,7 +530,7 @@ Disable-ScheduledTask -TaskName '$($c.TargetName)' -ErrorAction SilentlyContinue
     }
 
     if ($success) {
-        Write-Host " [✓ VERIFIED & APPLIED]" -ForegroundColor Green
+        Write-Host " [+ VERIFIED & APPLIED]" -ForegroundColor Green
     } else {
         Write-Host " [!] Completed (Review in Task Manager)" -ForegroundColor Yellow
     }
