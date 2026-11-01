@@ -97,7 +97,7 @@ WinOp/
 ├── packaging/            # PyInstaller build automation & spec
 │   ├── winop.spec
 │   └── build_exe.py
-├── tests/                # Automated test suite (17 tests)
+├── tests/                # Automated test suite (24 tests)
 └── docs/                 # Safety policy & troubleshooting documentation
 ```
 
