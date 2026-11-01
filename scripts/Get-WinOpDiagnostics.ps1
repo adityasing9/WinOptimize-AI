@@ -671,6 +671,10 @@ Write-Host "----------------------------------------------------------"
 if ($candidateList.Count -gt 0) {
     Write-Host "`nTop Identified Candidates (Read-Only Preview):" -ForegroundColor Magenta
     $candidateList | Select-Object -First 10 Category, TargetName, RiskLevel, Reason | Format-Table -AutoSize
+
+    Write-Host "💡 To disable or end tasks directly from your terminal with automatic safety backup, run:" -ForegroundColor Cyan
+    Write-Host "   irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1 | iex" -ForegroundColor White
+    Write-Host ""
 }
 
 # Output to JSON if requested

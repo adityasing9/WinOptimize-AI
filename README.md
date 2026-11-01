@@ -10,14 +10,23 @@
 
 ---
 
-## ⚡ Quick Run (PowerShell Direct One-Liner)
+## ⚡ Quick Run (PowerShell Direct One-Liners)
 
-You can run the read-only system inspection script directly from PowerShell without installing or cloning anything:
-
+### 1. Read-Only Diagnostic Scan
+Inspect system memory, running processes, startup apps, tasks, and services without making any modifications:
 ```powershell
 irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Get-WinOpDiagnostics.ps1 | iex
 ```
-*Direct script file in repository:* **[`scripts/Get-WinOpDiagnostics.ps1`](https://github.com/adityasing9/WinOptimize-AI/blob/main/scripts/Get-WinOpDiagnostics.ps1)**
+
+### 2. Interactive Terminal Optimizer (End Tasks & Disable Services/Apps)
+Safely disable background services, startup entries, scheduled tasks, or terminate memory hogs directly from PowerShell with automatic safety snapshots and 1-click instant rollback:
+```powershell
+irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1 | iex
+```
+*To instantly rollback changes applied from the terminal:*
+```powershell
+irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1 | iex -Rollback
+```
 
 ---
 
