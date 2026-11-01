@@ -406,14 +406,22 @@ foreach ($idx in $selectedIndices) {
             }
 
             # 3. Check verification
-            $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
-            $isDone = ($regProps -and ($regProps.Start -eq 3 -or $regProps.Start -eq 4))
-            if (-not $isDone) {
-                $updated = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
-                if ($updated -and ($updated.StartType -eq "Manual" -or $updated.StartType -eq "Disabled")) {
-                    $isDone = $true
-                }
+            $isProcStillRunning = $false
+            if ($c.ProcessNames) {
+                $procs = Get-Process -Name $c.ProcessNames -ErrorAction SilentlyContinue
+                if ($procs -and $procs.Count -gt 0) { $isProcStillRunning = $true }
             }
+            $chkSvc = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
+            $isSvcStillRunning = ($chkSvc -and $chkSvc.Status -eq "Running")
+
+            $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
+            $startIsManual = ($regProps -and ($regProps.Start -eq 3 -or $regProps.Start -eq 4))
+            if (-not $startIsManual -and $chkSvc) {
+                $startIsManual = ($chkSvc.StartType -eq "Manual" -or $chkSvc.StartType -eq "Disabled")
+            }
+
+            # Only marked done if startup is Manual/Disabled AND process/service is actually stopped
+            $isDone = $startIsManual -and (-not $isProcStillRunning) -and (-not $isSvcStillRunning)
 
             # 4. If failed because not running as admin, trigger single elevated UAC execution
             if (-not $isDone) {
@@ -437,15 +445,22 @@ Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)
 $killCommands
 "@
                 $null = Invoke-ElevatedPowerShell -Script $elevScript
-                $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
-                if ($regProps2 -and ($regProps2.Start -eq 3 -or $regProps2.Start -eq 4)) {
-                    $isDone = $true
-                } else {
-                    $updated2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
-                    if ($updated2 -and ($updated2.StartType -eq "Manual" -or $updated2.StartType -eq "Disabled")) {
-                        $isDone = $true
-                    }
+
+                # Re-verify post-elevation
+                $isProcStillRunning2 = $false
+                if ($c.ProcessNames) {
+                    $procs2 = Get-Process -Name $c.ProcessNames -ErrorAction SilentlyContinue
+                    if ($procs2 -and $procs2.Count -gt 0) { $isProcStillRunning2 = $true }
                 }
+                $chkSvc2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
+                $isSvcStillRunning2 = ($chkSvc2 -and $chkSvc2.Status -eq "Running")
+                $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
+                $startIsManual2 = ($regProps2 -and ($regProps2.Start -eq 3 -or $regProps2.Start -eq 4))
+                if (-not $startIsManual2 -and $chkSvc2) {
+                    $startIsManual2 = ($chkSvc2.StartType -eq "Manual" -or $chkSvc2.StartType -eq "Disabled")
+                }
+
+                $isDone = $startIsManual2 -and (-not $isProcStillRunning2) -and (-not $isSvcStillRunning2)
             }
             $success = $isDone
         }
