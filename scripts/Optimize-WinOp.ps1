@@ -147,8 +147,8 @@ $candidates = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 # 1. Services & Running Service Daemons
 $knownServices = @(
-    @{ Name = "GamingServices"; Display = "Xbox Gaming Services"; Reason = "Xbox Game Pass background installer daemon"; ProcessNames = @("GamingServices", "gamingservices") },
-    @{ Name = "GamingServicesNet"; Display = "Xbox Gaming Services Net"; Reason = "Xbox Game Pass networking helper"; ProcessNames = @("GamingServicesNet", "gamingservicesnet") },
+    @{ Name = "GamingServices"; Display = "Xbox Gaming Services"; Reason = "Xbox Game Pass background installer daemon"; ProcessNames = @("GamingServices", "gamingservices"); IsWindowsManaged = $true },
+    @{ Name = "GamingServicesNet"; Display = "Xbox Gaming Services Net"; Reason = "Xbox Game Pass networking helper"; ProcessNames = @("GamingServicesNet", "gamingservicesnet"); IsWindowsManaged = $true },
     @{ Name = "XboxService"; Display = "Xbox Accessory Service"; Reason = "Xbox accessory background service"; ProcessNames = @("XboxService") },
     @{ Name = "Speedify"; Display = "Speedify VPN Service"; Reason = "Speedify channel bonding VPN resident daemon"; ProcessNames = @("Speedify", "SpeedifyService") },
     @{ Name = "CloudflareWARP"; Display = "Cloudflare 1.1.1.1 WARP"; Reason = "WARP VPN background tunnel daemon"; ProcessNames = @("warp-svc") },
@@ -179,6 +179,11 @@ foreach ($svcMeta in $knownServices) {
             $isAuto = $false
             $startType = if ($regCheck.Start -eq 3) { "Manual" } else { "Disabled" }
         }
+    }
+
+    # If a Windows-managed AppX service is already set to Manual, it has already been optimized for boot
+    if ($svcMeta.IsWindowsManaged -and $startType -eq "Manual") {
+        continue
     }
 
     # Check if daemon process is currently running in background
