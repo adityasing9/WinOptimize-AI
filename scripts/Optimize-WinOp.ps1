@@ -44,7 +44,7 @@ function Invoke-ElevatedPowerShell {
     param([string]$Script)
     $bytes = [System.Text.Encoding]::Unicode.GetBytes($Script)
     $encoded = [System.Convert]::ToBase64String($bytes)
-    $proc = Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+    $proc = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
     $null = $proc.ExitCode
 }
 
@@ -147,15 +147,15 @@ $candidates = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 # 1. Services & Running Service Daemons
 $knownServices = @(
-    @{ Name = "GamingServices"; Display = "Xbox Gaming Services"; Reason = "Xbox Game Pass background installer daemon"; ProcessNames = @("GamingServices") },
-    @{ Name = "GamingServicesNet"; Display = "Xbox Gaming Services Net"; Reason = "Xbox Game Pass networking helper"; ProcessNames = @("GamingServicesNet") },
+    @{ Name = "GamingServices"; Display = "Xbox Gaming Services"; Reason = "Xbox Game Pass background installer daemon"; ProcessNames = @("GamingServices", "gamingservices") },
+    @{ Name = "GamingServicesNet"; Display = "Xbox Gaming Services Net"; Reason = "Xbox Game Pass networking helper"; ProcessNames = @("GamingServicesNet", "gamingservicesnet") },
     @{ Name = "XboxService"; Display = "Xbox Accessory Service"; Reason = "Xbox accessory background service"; ProcessNames = @("XboxService") },
     @{ Name = "Speedify"; Display = "Speedify VPN Service"; Reason = "Speedify channel bonding VPN resident daemon"; ProcessNames = @("Speedify", "SpeedifyService") },
     @{ Name = "CloudflareWARP"; Display = "Cloudflare 1.1.1.1 WARP"; Reason = "WARP VPN background tunnel daemon"; ProcessNames = @("warp-svc") },
     @{ Name = "warp-svc"; Display = "Cloudflare WARP Daemon"; Reason = "WARP client background engine"; ProcessNames = @("warp-svc") },
     @{ Name = "MongoDB"; Display = "MongoDB Database Server"; Reason = "Local database engine configured to autostart"; ProcessNames = @("mongod") },
-    @{ Name = "ACCSvc"; Display = "Acer Care Center"; Reason = "OEM background telemetry service"; ProcessNames = @("AcerCareCenterCheck", "ACCStd") },
-    @{ Name = "Bonjour Service"; Display = "Apple Bonjour Service"; Reason = "Apple mDNS local discovery service"; ProcessNames = @("mDNSResponder") }
+    @{ Name = "ACCSvc"; Display = "Acer Care Center"; Reason = "OEM background telemetry service"; ProcessNames = @("ACCSvc", "ACCStd", "AcerCareCenterCheck") },
+    @{ Name = "Bonjour Service"; Display = "Apple Bonjour Service"; Reason = "Apple mDNS local discovery service"; ProcessNames = @("mDNSResponder", "Bonjour") }
 )
 
 foreach ($svcMeta in $knownServices) {
@@ -338,8 +338,8 @@ if ($All) {
     }
     if ($choice -match "^[Ee]") {
         Write-Host "[*] Relaunching in elevated Administrator PowerShell window..." -ForegroundColor Cyan
-        $scriptUrl = "https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1"
-        Start-Process powershell -Verb RunAs -ArgumentList "-NoExit -ExecutionPolicy Bypass -Command `"irm $scriptUrl | iex`""
+        $scriptUrl = "https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1?v=$(Get-Random)"
+        Start-Process powershell -Verb RunAs -ArgumentList "-NoExit -ExecutionPolicy Bypass -Command `"irm '$scriptUrl' | iex`""
         Write-Host "[✓] Elevated Administrator window launched. You can continue there." -ForegroundColor Green
         if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter in this window to finish..." }
         return
@@ -397,20 +397,17 @@ foreach ($idx in $selectedIndices) {
             Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value 3 -Type DWord -ErrorAction SilentlyContinue
 
             # Terminate corresponding resident daemon process(es)
-            if ($c.ProcessNames) {
-                foreach ($pn in $c.ProcessNames) {
-                    taskkill.exe /F /T /IM "$pn.exe" 2>$null | Out-Null
-                }
-            } else {
-                taskkill.exe /F /T /IM "$($c.TargetName).exe" 2>$null | Out-Null
+            $allKill = @($c.TargetName)
+            if ($c.ProcessNames) { $allKill += $c.ProcessNames }
+            $allKill = $allKill | Select-Object -Unique
+            foreach ($pn in $allKill) {
+                taskkill.exe /F /T /IM "$pn.exe" 2>$null | Out-Null
             }
 
             # 3. Check verification
             $isProcStillRunning = $false
-            if ($c.ProcessNames) {
-                $procs = Get-Process -Name $c.ProcessNames -ErrorAction SilentlyContinue
-                if ($procs -and $procs.Count -gt 0) { $isProcStillRunning = $true }
-            }
+            $procs = Get-Process -Name $allKill -ErrorAction SilentlyContinue
+            if ($procs -and $procs.Count -gt 0) { $isProcStillRunning = $true }
             $chkSvc = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
             $isSvcStillRunning = ($chkSvc -and $chkSvc.Status -eq "Running")
 
@@ -427,12 +424,8 @@ foreach ($idx in $selectedIndices) {
             if (-not $isDone) {
                 Write-Host " [Admin UAC]..." -NoNewline -ForegroundColor Yellow
                 $killCommands = ""
-                if ($c.ProcessNames) {
-                    foreach ($pn in $c.ProcessNames) {
-                        $killCommands += "`ntaskkill.exe /F /T /IM '$pn.exe' 2>`$null"
-                    }
-                } else {
-                    $killCommands = "`ntaskkill.exe /F /T /IM '$($c.TargetName).exe' 2>`$null"
+                foreach ($pn in $allKill) {
+                    $killCommands += "`n& taskkill.exe /F /T /IM '$pn.exe' 2>`$null"
                 }
 
                 $elevScript = @"
@@ -448,10 +441,8 @@ $killCommands
 
                 # Re-verify post-elevation
                 $isProcStillRunning2 = $false
-                if ($c.ProcessNames) {
-                    $procs2 = Get-Process -Name $c.ProcessNames -ErrorAction SilentlyContinue
-                    if ($procs2 -and $procs2.Count -gt 0) { $isProcStillRunning2 = $true }
-                }
+                $procs2 = Get-Process -Name $allKill -ErrorAction SilentlyContinue
+                if ($procs2 -and $procs2.Count -gt 0) { $isProcStillRunning2 = $true }
                 $chkSvc2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
                 $isSvcStillRunning2 = ($chkSvc2 -and $chkSvc2.Status -eq "Running")
                 $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
