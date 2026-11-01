@@ -121,8 +121,10 @@ Write-Host "   WinOptimize AI — Interactive Terminal Optimizer        " -Foreg
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 if (-not $isAdmin) {
-    Write-Host "[!] Note: Running as standard user. Service modifications and elevated" -ForegroundColor Yellow
-    Write-Host "    tasks will request Administrator privileges if required." -ForegroundColor Yellow
+    Write-Host "[!] Note: Running as standard user." -ForegroundColor Yellow
+    Write-Host "    Configuring Windows Services (Speedify, WARP, Gaming Services, MongoDB)" -ForegroundColor White
+    Write-Host "    and Scheduled Tasks requires Administrator privileges." -ForegroundColor White
+    Write-Host "    You can continue (actions will request UAC), or press 'E' below to elevate." -ForegroundColor DarkGray
 }
 
 Write-Host "[*] Inspecting system state for optimization candidates..." -ForegroundColor Cyan
@@ -268,6 +270,9 @@ for ($i = 0; $i -lt $candidates.Count; $i++) {
 }
 Write-Host "----------------------------------------------------------"
 Write-Host "[A] Apply ALL Safe Recommendations" -ForegroundColor Green
+if (-not $isAdmin) {
+    Write-Host "[E] Relaunch as Administrator (Recommended for Services & Tasks)" -ForegroundColor Yellow
+}
 Write-Host "[R] Rollback Previous Changes" -ForegroundColor Cyan
 Write-Host "[Q] Quit without making any changes" -ForegroundColor DarkRed
 Write-Host "----------------------------------------------------------"
@@ -276,9 +281,16 @@ $selectedIndices = @()
 if ($All) {
     for ($i = 0; $i -lt $candidates.Count; $i++) { $selectedIndices += $i }
 } else {
-    $choice = if ($InputChoice) { $InputChoice } else { Read-Host "Enter option [A for all, numbers separated by commas (e.g. 1,2,4), or Q to quit]" }
+    $promptMsg = if (-not $isAdmin) { "Enter option [A for all, E to relaunch as Admin, numbers (e.g. 1,4), or Q to quit]" } else { "Enter option [A for all, numbers separated by commas (e.g. 1,2,4), or Q to quit]" }
+    $choice = if ($InputChoice) { $InputChoice } else { Read-Host $promptMsg }
     if ($choice -match "^[Qq]") {
         Write-Host "No changes applied. Exiting." -ForegroundColor Yellow
+        exit 0
+    }
+    if ($choice -match "^[Ee]") {
+        Write-Host "[*] Relaunching in elevated Administrator PowerShell window..." -ForegroundColor Cyan
+        $scriptUrl = "https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1"
+        Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm $scriptUrl | iex`""
         exit 0
     }
     if ($choice -match "^[Rr]") {
@@ -322,28 +334,64 @@ foreach ($idx in $selectedIndices) {
         "Service" {
             # 1. Capture snapshot
             Save-SnapshotRecord -Record $snapRecord
-            # 2. Reconfigure service
+            # 2. Reconfigure service (Direct attempt)
             Set-Service -Name $c.TargetName -StartupType Manual -ErrorAction SilentlyContinue
             Stop-Service -Name $c.TargetName -Force -ErrorAction SilentlyContinue
-            sc.exe config "$($c.TargetName)" start= demand | Out-Null
-            # 3. Verify
+            sc.exe config "$($c.TargetName)" start= demand 2>$null | Out-Null
+            net stop "$($c.TargetName)" 2>$null | Out-Null
+
+            # 3. Check verification
             $updated = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
-            if ($updated -and ($updated.StartType -eq "Manual" -or $updated.Status -eq "Stopped")) {
-                $success = $true
+            $isDone = ($updated -and ($updated.StartType -eq "Manual" -or $updated.Status -eq "Stopped"))
+            if (-not $isDone) {
+                $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
+                if ($regProps -and ($regProps.Start -eq 3 -or $regProps.Start -eq 4)) {
+                    $isDone = $true
+                }
             }
+
+            # 4. If failed because not running as admin, trigger single elevated UAC execution
+            if (-not $isDone) {
+                Write-Host " [Admin UAC]..." -NoNewline -ForegroundColor Yellow
+                $elevScript = "Set-Service -Name '$($c.TargetName)' -StartupType Manual -ErrorAction SilentlyContinue; Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue; & sc.exe config '$($c.TargetName)' start= demand; & net stop '$($c.TargetName)'"
+                Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$elevScript`""
+                $updated2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
+                if ($updated2 -and ($updated2.StartType -eq "Manual" -or $updated2.Status -eq "Stopped")) {
+                    $isDone = $true
+                } else {
+                    $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
+                    if ($regProps2 -and ($regProps2.Start -eq 3 -or $regProps2.Start -eq 4)) {
+                        $isDone = $true
+                    }
+                }
+            }
+            $success = $isDone
         }
         "ScheduledTask" {
             Save-SnapshotRecord -Record $snapRecord
             $taskPath = if ($c.OriginalState.TaskPath) { $c.OriginalState.TaskPath } else { "\" }
-            Disable-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue | Out-Null
-            schtasks.exe /change /tn "$($c.TargetName)" /disable | Out-Null
+            if (-not $taskPath.EndsWith("\")) { $taskPath = "$taskPath\" }
+            $fullPath = if ($taskPath -eq "\") { $c.TargetName } else { "$taskPath$($c.TargetName)" }
+
+            # 1. Direct attempt
+            Disable-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue 2>$null | Out-Null
+            Disable-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue 2>$null | Out-Null
+            schtasks.exe /change /tn "$fullPath" /disable 2>$null | Out-Null
+            schtasks.exe /change /tn "$($c.TargetName)" /disable 2>$null | Out-Null
+
+            # 2. Verify
             $t = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue
-            if ($t -and $t.State -eq "Disabled") {
-                $success = $true
-            } else {
-                # Fallback via elevated RunAs if needed
-                $success = $true
+            $isTaskDisabled = ($t -and $t.State -eq "Disabled")
+
+            # 3. Elevated fallback if needed
+            if (-not $isTaskDisabled) {
+                Write-Host " [Admin UAC]..." -NoNewline -ForegroundColor Yellow
+                $elevTask = "Disable-ScheduledTask -TaskName '$($c.TargetName)' -TaskPath '$taskPath' -ErrorAction SilentlyContinue; & schtasks.exe /change /tn `"$fullPath`" /disable"
+                Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$elevTask`""
+                $t2 = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue
+                $isTaskDisabled = ($t2 -and $t2.State -eq "Disabled")
             }
+            $success = $isTaskDisabled
         }
         "StartupEntry" {
             Save-SnapshotRecord -Record $snapRecord
