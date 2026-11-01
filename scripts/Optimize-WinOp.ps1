@@ -190,14 +190,13 @@ foreach ($svcMeta in $knownServices) {
     $isProcRunning = ($runningProcs.Count -gt 0)
 
     # Flag candidate if configured to Auto OR currently running
-    if ($isAuto -or $isProcRunning -or $isSvcRunning) {
-        $actionDesc = if ($isAuto -and ($isProcRunning -or $isSvcRunning)) {
+    if ($isAuto -or ($isProcRunning -and $startType -ne "Disabled") -or ($isSvcRunning -and $startType -ne "Disabled")) {
+        $actionDesc = if ($isAuto) {
             "Set startup to Manual & Stop resident daemon"
-        } elseif ($isAuto) {
-            "Set startup to Manual"
         } else {
-            "Stop running service & Terminate resident process"
+            "Set startup to Disabled (Prevent auto-respawn) & Stop process"
         }
+        $targetVal = if ($isAuto) { 3 } else { 4 }
 
         $candidates.Add([PSCustomObject]@{
             Category          = "Service"
@@ -208,6 +207,7 @@ foreach ($svcMeta in $knownServices) {
             ProcessNames      = $svcMeta.ProcessNames
             IsAuto            = $isAuto
             IsRunning         = ($isProcRunning -or $isSvcRunning)
+            TargetStartVal    = $targetVal
             OriginalState     = @{ StartMode = $startType }
             RequiresElevation = $true
         })
@@ -388,13 +388,17 @@ foreach ($idx in $selectedIndices) {
             # 1. Capture snapshot
             Save-SnapshotRecord -Record $snapRecord
 
+            $targetVal = if ($c.TargetStartVal) { $c.TargetStartVal } else { 3 }
+            $targetMode = if ($targetVal -eq 4) { "Disabled" } else { "Manual" }
+            $scMode = if ($targetVal -eq 4) { "disabled" } else { "demand" }
+
             # 2. Reconfigure service startup mode & stop resident instances
-            Set-Service -Name $c.TargetName -StartupType Manual -ErrorAction SilentlyContinue
+            Set-Service -Name $c.TargetName -StartupType $targetMode -ErrorAction SilentlyContinue
             Stop-Service -Name $c.TargetName -Force -ErrorAction SilentlyContinue
-            sc.exe config "$($c.TargetName)" start= demand 2>$null | Out-Null
+            sc.exe config "$($c.TargetName)" start= $scMode 2>$null | Out-Null
             net stop "$($c.TargetName)" 2>$null | Out-Null
             sc.exe stop "$($c.TargetName)" 2>$null | Out-Null
-            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value 3 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value $targetVal -Type DWord -ErrorAction SilentlyContinue
 
             # Terminate corresponding resident daemon process(es)
             $allKill = @($c.TargetName)
@@ -412,13 +416,10 @@ foreach ($idx in $selectedIndices) {
             $isSvcStillRunning = ($chkSvc -and $chkSvc.Status -eq "Running")
 
             $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
-            $startIsManual = ($regProps -and ($regProps.Start -eq 3 -or $regProps.Start -eq 4))
-            if (-not $startIsManual -and $chkSvc) {
-                $startIsManual = ($chkSvc.StartType -eq "Manual" -or $chkSvc.StartType -eq "Disabled")
-            }
+            $startIsTarget = ($regProps -and $regProps.Start -eq $targetVal)
 
-            # Only marked done if startup is Manual/Disabled AND process/service is actually stopped
-            $isDone = $startIsManual -and (-not $isProcStillRunning) -and (-not $isSvcStillRunning)
+            # Only marked done if startup matches target value AND process/service is actually stopped
+            $isDone = $startIsTarget -and (-not $isProcStillRunning) -and (-not $isSvcStillRunning)
 
             # 4. If failed because not running as admin, trigger single elevated UAC execution
             if (-not $isDone) {
@@ -429,12 +430,12 @@ foreach ($idx in $selectedIndices) {
                 }
 
                 $elevScript = @"
-Set-Service -Name '$($c.TargetName)' -StartupType Manual -ErrorAction SilentlyContinue
+Set-Service -Name '$($c.TargetName)' -StartupType $targetMode -ErrorAction SilentlyContinue
 Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue
-& sc.exe config '$($c.TargetName)' start= demand
+& sc.exe config '$($c.TargetName)' start= $scMode
 & net stop '$($c.TargetName)'
 & sc.exe stop '$($c.TargetName)'
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value 3 -Type DWord -ErrorAction SilentlyContinue
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value $targetVal -Type DWord -ErrorAction SilentlyContinue
 $killCommands
 "@
                 $null = Invoke-ElevatedPowerShell -Script $elevScript
@@ -446,12 +447,9 @@ $killCommands
                 $chkSvc2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
                 $isSvcStillRunning2 = ($chkSvc2 -and $chkSvc2.Status -eq "Running")
                 $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
-                $startIsManual2 = ($regProps2 -and ($regProps2.Start -eq 3 -or $regProps2.Start -eq 4))
-                if (-not $startIsManual2 -and $chkSvc2) {
-                    $startIsManual2 = ($chkSvc2.StartType -eq "Manual" -or $chkSvc2.StartType -eq "Disabled")
-                }
+                $startIsTarget2 = ($regProps2 -and $regProps2.Start -eq $targetVal)
 
-                $isDone = $startIsManual2 -and (-not $isProcStillRunning2) -and (-not $isSvcStillRunning2)
+                $isDone = $startIsTarget2 -and (-not $isProcStillRunning2) -and (-not $isSvcStillRunning2)
             }
             $success = $isDone
         }
