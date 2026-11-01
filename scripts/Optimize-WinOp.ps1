@@ -40,6 +40,14 @@ $snapshotDir = Join-Path $env:LOCALAPPDATA "WinOptimizeAI\Snapshots"
 if (-not (Test-Path $snapshotDir)) { New-Item -ItemType Directory -Path $snapshotDir -Force | Out-Null }
 $snapshotFile = Join-Path $snapshotDir "terminal_snapshots.json"
 
+function Invoke-ElevatedPowerShell {
+    param([string]$Script)
+    $bytes = [System.Text.Encoding]::Unicode.GetBytes($Script)
+    $encoded = [System.Convert]::ToBase64String($bytes)
+    $proc = Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+    return $proc.ExitCode
+}
+
 # Load existing snapshots
 function Get-SavedSnapshots {
     if (Test-Path $snapshotFile) {
@@ -147,25 +155,26 @@ $knownServices = @(
 foreach ($svcMeta in $knownServices) {
     $svc = Get-Service -Name $svcMeta.Name -ErrorAction SilentlyContinue
     $isAuto = $false
-    $isRunning = $false
     $startType = "Manual"
     if ($svc) {
         $startType = $svc.StartType.ToString()
         $isAuto = ($startType -eq "Automatic")
-        $isRunning = ($svc.Status -eq "Running")
-    } else {
-        # Registry fallback when Service Controller is restricted
-        $regP = "HKLM:\SYSTEM\CurrentControlSet\Services\$($svcMeta.Name)"
-        if (Test-Path $regP) {
-            $regProps = Get-ItemProperty -Path $regP -ErrorAction SilentlyContinue
-            if ($regProps.Start -eq 2) {
-                $isAuto = $true
-                $startType = "Automatic"
-            }
+    }
+
+    # Verify directly against registry Start value (2=Auto, 3=Manual, 4=Disabled)
+    $regCheck = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($svcMeta.Name)" -ErrorAction SilentlyContinue
+    if ($regCheck) {
+        if ($regCheck.Start -eq 2) {
+            $isAuto = $true
+            $startType = "Automatic"
+        } elseif ($regCheck.Start -eq 3 -or $regCheck.Start -eq 4) {
+            $isAuto = $false
+            $startType = if ($regCheck.Start -eq 3) { "Manual" } else { "Disabled" }
         }
     }
 
-    if ($isAuto -or $isRunning) {
+    # Only flag as candidate if still configured to autostart at system boot
+    if ($isAuto) {
         $candidates.Add([PSCustomObject]@{
             Category          = "Service"
             TargetName        = $svcMeta.Name
@@ -210,15 +219,17 @@ $knownTasks = @(
 )
 
 foreach ($tMeta in $knownTasks) {
-    $t = Get-ScheduledTask -TaskName $tMeta.Name -ErrorAction SilentlyContinue
+    $t = Get-ScheduledTask -TaskName $tMeta.Name -TaskPath $tMeta.Path -ErrorAction SilentlyContinue
+    if (-not $t) { $t = Get-ScheduledTask -TaskName $tMeta.Name -ErrorAction SilentlyContinue }
     if ($t -and $t.State -ne "Disabled") {
+        $taskPath = if ($t.TaskPath) { $t.TaskPath } else { $tMeta.Path }
         $candidates.Add([PSCustomObject]@{
             Category          = "ScheduledTask"
             TargetName        = $t.TaskName
             DisplayName       = "$($t.TaskName) Task"
             CurrentAction     = "Disable scheduled task"
             Reason            = "OEM telemetry / updater scheduled task"
-            OriginalState     = @{ TaskPath = $t.TaskPath; State = $t.State.ToString() }
+            OriginalState     = @{ TaskPath = $taskPath; State = $t.State.ToString() }
             RequiresElevation = $true
         })
     }
@@ -353,8 +364,13 @@ foreach ($idx in $selectedIndices) {
             # 4. If failed because not running as admin, trigger single elevated UAC execution
             if (-not $isDone) {
                 Write-Host " [Admin UAC]..." -NoNewline -ForegroundColor Yellow
-                $elevScript = "Set-Service -Name '$($c.TargetName)' -StartupType Manual -ErrorAction SilentlyContinue; Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue; & sc.exe config '$($c.TargetName)' start= demand; & net stop '$($c.TargetName)'"
-                Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$elevScript`""
+                $elevScript = @"
+Set-Service -Name '$($c.TargetName)' -StartupType Manual -ErrorAction SilentlyContinue
+Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue
+& sc.exe config '$($c.TargetName)' start= demand
+& net stop '$($c.TargetName)'
+"@
+                Invoke-ElevatedPowerShell -Script $elevScript
                 $updated2 = Get-Service -Name $c.TargetName -ErrorAction SilentlyContinue
                 if ($updated2 -and ($updated2.StartType -eq "Manual" -or $updated2.Status -eq "Stopped")) {
                     $isDone = $true
@@ -380,15 +396,22 @@ foreach ($idx in $selectedIndices) {
             schtasks.exe /change /tn "$($c.TargetName)" /disable 2>$null | Out-Null
 
             # 2. Verify
-            $t = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue
+            $t = Get-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue
+            if (-not $t) { $t = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue }
             $isTaskDisabled = ($t -and $t.State -eq "Disabled")
 
-            # 3. Elevated fallback if needed
+            # 3. Elevated fallback if needed via Base64 EncodedCommand
             if (-not $isTaskDisabled) {
                 Write-Host " [Admin UAC]..." -NoNewline -ForegroundColor Yellow
-                $elevTask = "Disable-ScheduledTask -TaskName '$($c.TargetName)' -TaskPath '$taskPath' -ErrorAction SilentlyContinue; & schtasks.exe /change /tn `"$fullPath`" /disable"
-                Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$elevTask`""
-                $t2 = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue
+                $elevTask = @"
+Disable-ScheduledTask -TaskName '$($c.TargetName)' -TaskPath '$taskPath' -ErrorAction SilentlyContinue
+Disable-ScheduledTask -TaskName '$($c.TargetName)' -ErrorAction SilentlyContinue
+& schtasks.exe /change /tn "$fullPath" /disable
+& schtasks.exe /change /tn "$($c.TargetName)" /disable
+"@
+                Invoke-ElevatedPowerShell -Script $elevTask
+                $t2 = Get-ScheduledTask -TaskName $c.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue
+                if (-not $t2) { $t2 = Get-ScheduledTask -TaskName $c.TargetName -ErrorAction SilentlyContinue }
                 $isTaskDisabled = ($t2 -and $t2.State -eq "Disabled")
             }
             $success = $isTaskDisabled
