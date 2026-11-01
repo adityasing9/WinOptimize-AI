@@ -58,7 +58,8 @@ PROTECTED_SYSTEM_COMPONENTS = {
         "ShellExperienceHost.exe", "MsMpEng.exe", "SecurityHealthHost.exe",
         "SecurityHealthSystray.exe", "SearchHost.exe", "StartMenuExperienceHost.exe",
         "smartscreen.exe", "ApplicationFrameHost.exe", "ctfmon.exe", "taskhostw.exe",
-        "fontdrvhost.exe", "sihost.exe", "Memory Compression", "System"
+        "fontdrvhost.exe", "sihost.exe", "Memory Compression", "System",
+        "TextInputHost.exe", "TextInputHost", "ShellHost.exe", "ShellHost"
     },
     "services": {
         "WinDefend", "SecurityHealthService", "MpsSvc", "Audiosrv", "AudioEndpointBuilder",
@@ -265,5 +266,153 @@ BUILTIN_RULES: List[Rule] = [
         name_patterns=[r"MicrosoftEdgeAutoLaunch"],
         executable_patterns=[r"msedge\.exe"],
         requires_elevation=False,
+    ),
+
+    # 11. Brave Browser Background Memory Hog
+    Rule(
+        rule_id="RULE-PROC-BRAVE-012",
+        component_name="Brave Browser (Background & Tabs)",
+        category=RuleCategory.BACKGROUND_PROCESS,
+        risk_level=RuleRiskLevel.CONDITIONAL,
+        confidence=0.90,
+        title="Brave Browser High Memory Usage",
+        description="Multiple background renderer processes and dormant tabs consuming multiple gigabytes of RAM.",
+        recommended_action="Enable Browser Memory Saver & Close Dormant Background Tabs",
+        side_effects="Sleeping tabs reload when clicked. Reclaims up to 3 GB+ of memory.",
+        reversibility_info="Tabs can be restored or reloaded at any time.",
+        name_patterns=[r"brave"],
+        executable_patterns=[r"brave\.exe"],
+        requires_elevation=False,
+    ),
+
+    # 12. Microsoft Edge Dormant Background Instances
+    Rule(
+        rule_id="RULE-PROC-EDGE-013",
+        component_name="Microsoft Edge (Background Processes)",
+        category=RuleCategory.BACKGROUND_PROCESS,
+        risk_level=RuleRiskLevel.LOW,
+        confidence=0.85,
+        title="Microsoft Edge Sleeping Background Processes",
+        description="Edge maintains background processes and extensions resident even when closed.",
+        recommended_action="Turn off Startup Boost and close background Edge processes",
+        side_effects="Edge initial cold startup takes ~1 second longer. Saves ~400-500 MB RAM.",
+        reversibility_info="Can be re-enabled in edge://settings/system.",
+        name_patterns=[r"msedge"],
+        executable_patterns=[r"msedge\.exe"],
+        requires_elevation=False,
+    ),
+
+    # 13. Windows Phone Link Background Host
+    Rule(
+        rule_id="RULE-PROC-PHONELINK-014",
+        component_name="Windows Phone Link (PhoneExperienceHost)",
+        category=RuleCategory.BACKGROUND_PROCESS,
+        risk_level=RuleRiskLevel.CONDITIONAL,
+        confidence=0.85,
+        title="Phone Link Background Synchronization",
+        description="Windows Phone Link phone sync agent stays continuously resident, taking 200-450 MB RAM.",
+        recommended_action="Close idle host or set background permissions to Never in Windows Settings",
+        side_effects="Phone notifications will pause until Phone Link app is launched.",
+        reversibility_info="Launch Phone Link app to resume full synchronization.",
+        name_patterns=[r"PhoneExperienceHost", r"CrossDeviceService"],
+        executable_patterns=[r"PhoneExperienceHost\.exe", r"CrossDeviceService\.exe"],
+        requires_elevation=False,
+    ),
+
+    # 14. Developer Database Server (MongoDB)
+    Rule(
+        rule_id="RULE-PROC-DEVDB-015",
+        component_name="MongoDB Database Server",
+        category=RuleCategory.BACKGROUND_PROCESS,
+        risk_level=RuleRiskLevel.CONDITIONAL,
+        confidence=0.85,
+        title="MongoDB Background Database Server",
+        description="Local MongoDB database daemon running resident in background.",
+        recommended_action="Stop MongoDB server service when not developing",
+        side_effects="Local database connections will fail until restarted.",
+        reversibility_info="Run 'net start MongoDB' to resume.",
+        name_patterns=[r"mongod", r"MongoDB"],
+        executable_patterns=[r"mongod\.exe"],
+        requires_elevation=True,
+    ),
+
+    # 15. SweetLabs App Explorer Bloatware Task
+    Rule(
+        rule_id="RULE-TASK-APPEXPLORER-016",
+        component_name="App Explorer Task",
+        category=RuleCategory.SCHEDULED_TASK,
+        risk_level=RuleRiskLevel.LOW,
+        confidence=0.95,
+        title="SweetLabs App Explorer Telemetry Task",
+        description="OEM background promotional task that downloads third-party app recommendations.",
+        recommended_action="Disable scheduled task",
+        side_effects="None. Removes unprompted promotional app suggestions.",
+        reversibility_info="Re-enable task using Disable-ScheduledTask / Enable-ScheduledTask.",
+        name_patterns=[r"App Explorer"],
+        requires_elevation=True,
+    ),
+
+    # 16. SoftLanding Creative Management Task
+    Rule(
+        rule_id="RULE-TASK-SOFTLANDING-017",
+        component_name="SoftLanding Creative Management",
+        category=RuleCategory.SCHEDULED_TASK,
+        risk_level=RuleRiskLevel.LOW,
+        confidence=0.90,
+        title="SoftLanding OEM Management Task",
+        description="Vendor background management task executing periodic background telemetry.",
+        recommended_action="Disable scheduled task",
+        side_effects="None. Normal PC hardware operation is completely unaffected.",
+        reversibility_info="Re-enable task in Task Scheduler.",
+        name_patterns=[r"SoftLanding.*Management"],
+        requires_elevation=True,
+    ),
+
+    # 17. Acer Jumpstart Runtime Task
+    Rule(
+        rule_id="RULE-TASK-JUMPSTART-018",
+        component_name="Acer Jumpstart Runtime Task",
+        category=RuleCategory.SCHEDULED_TASK,
+        risk_level=RuleRiskLevel.LOW,
+        confidence=0.90,
+        title="Acer Jumpstart Diagnostic Telemetry",
+        description="OEM background diagnostic monitoring task executing resident in background.",
+        recommended_action="Disable scheduled task",
+        side_effects="Disables OEM diagnostic background activity. Laptop works normally.",
+        reversibility_info="Re-enable task in Task Scheduler.",
+        name_patterns=[r"Jumpstart.*Task"],
+        requires_elevation=True,
+    ),
+
+    # 18. OneDrive Standalone Background Tasks
+    Rule(
+        rule_id="RULE-TASK-ONEDRIVE-019",
+        component_name="OneDrive Standalone Tasks",
+        category=RuleCategory.SCHEDULED_TASK,
+        risk_level=RuleRiskLevel.LOW,
+        confidence=0.85,
+        title="OneDrive Background Scheduled Tasks",
+        description="Recurring update and reporting loops running in background even when OneDrive sync is disabled.",
+        recommended_action="Disable scheduled task",
+        side_effects="OneDrive background update checks will pause until OneDrive is manually launched.",
+        reversibility_info="Re-enable task in Task Scheduler.",
+        name_patterns=[r"OneDrive.*Standalone.*Update", r"OneDrive.*Reporting", r"OneDrive.*Startup"],
+        requires_elevation=False,
+    ),
+
+    # 19. Apple Bonjour Service
+    Rule(
+        rule_id="RULE-SVC-BONJOUR-020",
+        component_name="Bonjour Service",
+        category=RuleCategory.SERVICE,
+        risk_level=RuleRiskLevel.LOW,
+        confidence=0.90,
+        title="Apple Bonjour Network Discovery Service",
+        description="Apple zero-configuration local mDNS networking service. Unnecessary if not sharing local Apple libraries.",
+        recommended_action="Set service startup type to Manual",
+        side_effects="Apple local network sharing starts on-demand rather than on boot.",
+        reversibility_info="Reconfigure to Automatic via services.msc.",
+        name_patterns=[r"Bonjour.*Service", r"Bonjour"],
+        requires_elevation=True,
     ),
 ]

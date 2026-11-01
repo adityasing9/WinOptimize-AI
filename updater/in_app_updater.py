@@ -18,7 +18,7 @@ from typing import Optional, Callable, Dict, Any
 
 logger = logging.getLogger("WinOp.Updater")
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 GITHUB_REPO = "adityasing9/WinOptimize-AI"
 API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 

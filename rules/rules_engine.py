@@ -265,3 +265,68 @@ class RulesEngine:
             requires_elevation=True,
             is_protected=False,
         )
+
+    def evaluate_process(
+        self,
+        process_name: str,
+        executable_path: str = "",
+        ram_mb: float = 0.0,
+        count: int = 1,
+    ) -> RuleEvaluationResult:
+        """Evaluates a running background process against rules and protected policies."""
+        p_name = process_name.lower().replace(".exe", "").strip()
+        exe_path = executable_path or ""
+
+        # 1. Protected Check
+        if self.is_protected_process(p_name, exe_path):
+            return RuleEvaluationResult(
+                is_matched=True,
+                risk_level=RuleRiskLevel.PROTECTED,
+                confidence=1.0,
+                rule=None,
+                explanation="Essential Windows system process; protected from termination.",
+                recommended_action="Do not modify (Protected Process)",
+                side_effects="Terminating will cause system crash or loss of desktop session.",
+                reversibility_info="N/A",
+                requires_elevation=True,
+                is_protected=True,
+            )
+
+        # 2. Match catalog rules
+        for rule in self.rules:
+            if rule.category != RuleCategory.BACKGROUND_PROCESS:
+                continue
+
+            matched = any(re.search(pat, p_name, re.IGNORECASE) for pat in rule.name_patterns)
+            if not matched and exe_path:
+                matched = any(re.search(pat, exe_path, re.IGNORECASE) for pat in rule.executable_patterns)
+
+            if matched:
+                detail = f"Consuming {ram_mb:.1f} MB across {count} process(es)." if count > 1 else f"Consuming {ram_mb:.1f} MB."
+                explanation = f"{rule.description} ({detail})"
+                return RuleEvaluationResult(
+                    is_matched=True,
+                    risk_level=rule.risk_level,
+                    confidence=rule.confidence,
+                    rule=rule,
+                    explanation=explanation,
+                    recommended_action=rule.recommended_action,
+                    side_effects=rule.side_effects,
+                    reversibility_info=rule.reversibility_info,
+                    requires_elevation=rule.requires_elevation,
+                    is_protected=False,
+                )
+
+        # 3. Unclassified background process
+        return RuleEvaluationResult(
+            is_matched=False,
+            risk_level=RuleRiskLevel.CONDITIONAL,
+            confidence=0.60,
+            rule=None,
+            explanation=f"Background application '{process_name}' consuming {ram_mb:.1f} MB across {count} instance(s).",
+            recommended_action="Review application memory usage or close if idle",
+            side_effects="Application will close. Save any unsaved progress first.",
+            reversibility_info="Can be reopened at any time.",
+            requires_elevation=False,
+            is_protected=False,
+        )

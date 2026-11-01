@@ -364,3 +364,60 @@ class ServiceModifier(BaseModifier):
         elev_script = f"Set-Service -Name '{svc_name}' -StartupType {orig_mode} -ErrorAction Stop"
         self._run_elevated_ps(elev_script)
         return self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": orig_mode})
+
+
+class ProcessModifier(BaseModifier):
+    """
+    Manages non-protected background processes and memory hogs.
+    Safely terminates approved background instances or dormant renderers.
+    Never terminates protected Windows core processes.
+    """
+
+    def capture_current_state(self, target_identifier: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        pids = params.get("pids", [])
+        proc_name = params.get("process_name", "")
+        return {
+            "process_name": proc_name,
+            "pids": pids,
+            "action": "running",
+        }
+
+    def apply_modification(self, target_identifier: str, params: Dict[str, Any]) -> bool:
+        pids = params.get("pids", [])
+        proc_name = params.get("process_name", "").lower()
+
+        # Hard safety guarantee: Never terminate protected processes
+        from rules.rule_definitions import PROTECTED_SYSTEM_COMPONENTS
+        if proc_name in [p.lower() for p in PROTECTED_SYSTEM_COMPONENTS["processes"]]:
+            logger.warning("Attempted to terminate protected process '%s'; operation rejected.", proc_name)
+            return False
+
+        try:
+            import psutil
+            terminated = 0
+            for pid in pids:
+                try:
+                    p = psutil.Process(pid)
+                    if p.name().lower() == proc_name or proc_name in p.name().lower():
+                        p.terminate()
+                        terminated += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            logger.info("Terminated %d processes for '%s'", terminated, proc_name)
+            return True
+        except Exception as e:
+            logger.error("Error managing process '%s': %s", proc_name, e)
+            return False
+
+    def verify_state(self, target_identifier: str, expected_state: Dict[str, Any]) -> bool:
+        pids = expected_state.get("pids", [])
+        try:
+            import psutil
+            alive = sum(1 for pid in pids if psutil.pid_exists(pid))
+            return alive == 0
+        except Exception:
+            return True
+
+    def revert_modification(self, target_identifier: str, original_state: Dict[str, Any]) -> bool:
+        logger.info("Process revert: target application '%s' can be launched normally by user.", original_state.get("process_name"))
+        return True

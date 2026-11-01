@@ -189,8 +189,125 @@ class ProcessAnalyzer:
             )
             recommendations.append(rec)
 
+        # 3. Analyze Running Background Processes & Memory Hogs
+        grouped_procs: Dict[str, List[ProcessFinding]] = {}
+        for p in report.top_processes:
+            clean_name = p.name.lower().replace(".exe", "")
+            grouped_procs.setdefault(clean_name, []).append(p)
+
+        # Developer / Active Tool whitelist so we never disrupt user's workspace
+        active_tools_whitelist = {"antigravity", "language_server", "winoptimizeai", "taskmgr", "windowsterminal"}
+
+        for p_name, proc_list in grouped_procs.items():
+            first_proc = proc_list[0]
+            total_ram = sum(p.working_set_mb for p in proc_list)
+            pids = [p.pid for p in proc_list]
+            exe_path = first_proc.executable_path or ""
+
+            # Skip core Windows, protected processes, and active IDE tools
+            if p_name in active_tools_whitelist or self.rules_engine.is_protected_process(p_name, exe_path):
+                continue
+
+            target_id = f"Process:{p_name}"
+            pref = user_prefs.get(target_id)
+            if pref == "keep_enabled" or pref == "ignore":
+                continue
+
+            eval_res = self.rules_engine.evaluate_process(
+                process_name=p_name,
+                executable_path=exe_path,
+                ram_mb=total_ram,
+                count=len(proc_list),
+            )
+
+            # Recommend if matched rule or high RAM consumption (>= 180 MB)
+            if eval_res.is_matched or total_ram >= 180.0:
+                rec_id = f"REC-PROC-{uuid.uuid4().hex[:8].upper()}"
+                title_str = eval_res.rule.title if eval_res.rule else f"High Memory Usage: {first_proc.name}"
+                rec = OptimizationRecommendation(
+                    recommendation_id=rec_id,
+                    category=RuleCategory.BACKGROUND_PROCESS.value,
+                    component_name=f"{first_proc.name} ({len(proc_list)}x)",
+                    target_identifier=target_id,
+                    risk_level=eval_res.risk_level,
+                    confidence=eval_res.confidence,
+                    title=title_str,
+                    description=eval_res.explanation,
+                    recommended_action=eval_res.recommended_action,
+                    side_effects=eval_res.side_effects,
+                    reversibility_info=eval_res.reversibility_info,
+                    requires_elevation=eval_res.requires_elevation,
+                    current_state={
+                        "process_name": first_proc.name,
+                        "pids": pids,
+                        "count": len(proc_list),
+                        "total_ram_mb": round(total_ram, 1),
+                    },
+                    proposed_state={
+                        "process_name": first_proc.name,
+                        "action": "trim_or_close",
+                        "pids": pids,
+                    },
+                    is_protected=False,
+                    is_approved=False,
+                    user_preference=pref,
+                    correlated_pids=pids,
+                    observed_ram_mb=round(total_ram, 1),
+                )
+                recommendations.append(rec)
+
+        # 4. Analyze Non-Microsoft Background Services
+        for svc in report.services_overview:
+            if svc.is_microsoft or svc.status.lower() != "running":
+                continue
+            if svc.start_mode.lower() == "manual":
+                continue
+
+            target_id = f"Service:{svc.name}"
+            pref = user_prefs.get(target_id)
+            if pref == "keep_enabled" or pref == "ignore":
+                continue
+
+            eval_res = self.rules_engine.evaluate_service(
+                service_name=svc.name,
+                display_name=svc.display_name,
+                image_path=svc.binary_path,
+            )
+
+            if eval_res.is_protected or not eval_res.is_matched:
+                continue
+
+            rec_id = f"REC-SVC-{uuid.uuid4().hex[:8].upper()}"
+            title_str = eval_res.rule.title if eval_res.rule else f"Optional Service: {svc.display_name}"
+            rec = OptimizationRecommendation(
+                recommendation_id=rec_id,
+                category=RuleCategory.SERVICE.value,
+                component_name=svc.display_name or svc.name,
+                target_identifier=target_id,
+                risk_level=eval_res.risk_level,
+                confidence=eval_res.confidence,
+                title=title_str,
+                description=eval_res.explanation,
+                recommended_action=eval_res.recommended_action,
+                side_effects=eval_res.side_effects,
+                reversibility_info=eval_res.reversibility_info,
+                requires_elevation=True,
+                current_state={
+                    "service_name": svc.name,
+                    "start_mode": svc.start_mode,
+                },
+                proposed_state={
+                    "service_name": svc.name,
+                    "target_mode": "Manual",
+                },
+                is_protected=False,
+                is_approved=False,
+                user_preference=pref,
+            )
+            recommendations.append(rec)
+
         # Sort recommendations: LOW risk first, then CONDITIONAL; higher confidence first
         risk_order = {RuleRiskLevel.LOW: 0, RuleRiskLevel.CONDITIONAL: 1, RuleRiskLevel.PROTECTED: 2}
-        recommendations.sort(key=lambda r: (risk_order.get(r.risk_level, 99), -r.confidence))
+        recommendations.sort(key=lambda r: (risk_order.get(r.risk_level, 99), -r.confidence, -r.observed_ram_mb))
 
         return recommendations

@@ -20,6 +20,7 @@ from .modifiers import (
     StartupRegistryModifier,
     ScheduledTaskModifier,
     ServiceModifier,
+    ProcessModifier,
 )
 
 logger = logging.getLogger("WinOp.Coordinator")
@@ -52,6 +53,7 @@ class OptimizationCoordinator:
             "StartupEntry": StartupRegistryModifier(),
             "ScheduledTask": ScheduledTaskModifier(),
             "Service": ServiceModifier(),
+            "BackgroundProcess": ProcessModifier(),
         }
 
     def execute_session(
@@ -115,6 +117,7 @@ class OptimizationCoordinator:
                 "StartupEntry": "registry_startup",
                 "ScheduledTask": "scheduled_task",
                 "Service": "service",
+                "BackgroundProcess": "background_process",
             }
             target_type = target_type_map.get(rec.category, "unknown")
 

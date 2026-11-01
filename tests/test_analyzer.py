@@ -106,6 +106,36 @@ class TestRulesAndAnalyzer(unittest.TestCase):
         rec = recs[0]
         self.assertEqual(rec.component_name, "Opera Browser Assistant")
 
+    def test_background_process_and_bloatware_detection(self):
+        """Verify that high-RAM background apps and bloatware tasks are detected."""
+        report = DiagnosticReport(
+            top_processes=[
+                ProcessFinding(pid=1001, name="brave.exe", working_set_mb=450.0),
+                ProcessFinding(pid=1002, name="brave.exe", working_set_mb=350.0),
+                ProcessFinding(pid=2001, name="msedge.exe", working_set_mb=260.0),
+                ProcessFinding(pid=3001, name="MsMpEng.exe", working_set_mb=350.0),  # Protected
+            ],
+            scheduled_tasks=[
+                ScheduledTaskFinding(task_name="App Explorer", task_path="\\", state="Running"),
+            ]
+        )
+
+        recs = self.analyzer.analyze(report)
+        categories = [r.category for r in recs]
+        names = [r.component_name for r in recs]
+
+        # MsMpEng must NOT be recommended (protected)
+        self.assertFalse(any("MsMpEng" in n for n in names))
+
+        # Brave and Edge must be recommended under BackgroundProcess
+        self.assertIn("BackgroundProcess", categories)
+        self.assertTrue(any("brave" in n.lower() for n in names))
+        self.assertTrue(any("msedge" in n.lower() for n in names))
+
+        # App Explorer must be recommended under ScheduledTask
+        self.assertIn("ScheduledTask", categories)
+        self.assertIn("App Explorer", names)
+
 
 if __name__ == "__main__":
     unittest.main()
