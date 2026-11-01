@@ -161,6 +161,21 @@ class TestRulesAndAnalyzer(unittest.TestCase):
         self.assertIn("Cloudflare WARP", svc_names)
         self.assertIn("MongoDB Server", svc_names)
 
+    def test_running_manual_service_detection(self):
+        """Verify that running services set to Manual are flagged to be stopped."""
+        report = DiagnosticReport(
+            services_overview=[
+                ServiceFinding(name="MongoDB", display_name="MongoDB Server", status="Running", start_mode="Manual", is_microsoft=False),
+                ServiceFinding(name="CloudflareWARP", display_name="Cloudflare WARP", status="Running", start_mode="Manual", is_microsoft=False),
+                ServiceFinding(name="StoppedSvc", display_name="Stopped Service", status="Stopped", start_mode="Manual", is_microsoft=False),
+            ]
+        )
+        recs = self.analyzer.analyze(report)
+        svc_names = [r.component_name for r in recs if r.category == RuleCategory.SERVICE.value]
+        self.assertIn("MongoDB Server", svc_names)
+        self.assertIn("Cloudflare WARP", svc_names)
+        self.assertNotIn("Stopped Service", svc_names)
+
 
 if __name__ == "__main__":
     unittest.main()

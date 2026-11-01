@@ -185,7 +185,7 @@ class ScheduledTaskModifier(BaseModifier):
         """Runs a PowerShell script with elevated Administrator UAC privileges using UTF-16LE Base64."""
         encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         elev_cmd = (
-            f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
+            f"Start-Process powershell -Verb RunAs -Wait "
             f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}'"
         )
         return self._run_ps(elev_cmd)
@@ -370,7 +370,7 @@ class ServiceModifier(BaseModifier):
     def _run_elevated_ps(self, script: str) -> Tuple[int, str]:
         encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         elev_cmd = (
-            f"Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
+            f"Start-Process powershell -Verb RunAs -Wait "
             f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}'"
         )
         return self._run_ps(elev_cmd)
@@ -390,28 +390,48 @@ class ServiceModifier(BaseModifier):
         target_mode = params.get("target_mode", "Manual")
         sc_mode = "demand" if target_mode.lower() in ("manual", "demand") else ("disabled" if target_mode.lower() == "disabled" else "auto")
 
-        # 1. Un-elevated Set-Service attempt
-        cmd = f"Set-Service -Name '{svc_name}' -StartupType {target_mode} -ErrorAction Stop"
-        rc, out = self._run_ps(cmd)
-        if rc == 0 and self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode}):
+        # Daemon process map for services whose binary names differ from service name
+        daemon_map = {
+            "cloudflarewarp": ["warp-svc.exe"],
+            "warp-svc": ["warp-svc.exe"],
+            "mongodb": ["mongod.exe"],
+            "gamingservices": ["gamingservices.exe"],
+            "gamingservicesnet": ["gamingservicesnet.exe"],
+            "speedify": ["speedify.exe", "speedifyservice.exe"],
+            "accsvc": ["acercarecentercheck.exe", "accstd.exe"],
+            "bonjour service": ["mdnsresponder.exe"],
+        }
+        procs_to_kill = daemon_map.get(svc_name.lower(), [f"{svc_name}.exe"])
+
+        # 1. Un-elevated Set-Service & Stop attempt
+        cmd = f"""
+Set-Service -Name '{svc_name}' -StartupType {target_mode} -ErrorAction SilentlyContinue
+Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue
+& sc.exe config "{svc_name}" start= {sc_mode}
+& net stop "{svc_name}"
+& sc.exe stop "{svc_name}"
+"""
+        self._run_ps(cmd)
+        for proc in procs_to_kill:
+            subprocess.run(["taskkill.exe", "/F", "/T", "/IM", proc], capture_output=True, timeout=5)
+
+        if self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode}):
             return True
 
-        # 2. Native sc.exe config attempt
-        sc_cmd = f'sc.exe config "{svc_name}" start= {sc_mode}'
-        rc_sc, _ = self._run_ps(sc_cmd)
-        if rc_sc == 0 and self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode}):
-            return True
-
-        # 3. Elevated fallback via UAC (including direct registry write for ACL-locked services like GamingServices)
+        # 2. Elevated fallback via UAC (including direct registry write for ACL-locked services like GamingServices)
         reg_val = 3 if target_mode.lower() in ("manual", "demand") else (4 if target_mode.lower() == "disabled" else 2)
+        kill_cmds = "\n".join(f'& taskkill.exe /F /T /IM "{p}" 2>`$null' for p in procs_to_kill)
         elev_script = f"""
 try {{
-    Set-Service -Name '{svc_name}' -StartupType {target_mode} -ErrorAction Stop
+    Set-Service -Name '{svc_name}' -StartupType {target_mode} -ErrorAction SilentlyContinue
+    Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue
 }} catch {{
     & sc.exe config "{svc_name}" start= {sc_mode}
 }}
+& net stop "{svc_name}"
+& sc.exe stop "{svc_name}"
 Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\{svc_name}" -Name "Start" -Value {reg_val} -ErrorAction SilentlyContinue
-taskkill.exe /F /IM "{svc_name}.exe" 2>$null
+{kill_cmds}
 """
         self._run_elevated_ps(elev_script)
         return self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode})
@@ -554,6 +574,7 @@ class ProcessModifier(BaseModifier):
                         return True
             except Exception:
                 pass
+            return True
 
         proc_exe = f"{proc_name}.exe"
         try:

@@ -5,7 +5,7 @@ a = Analysis(
     ['app\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('scripts/Get-WinOpDiagnostics.ps1', 'scripts')],
+    datas=[('scripts/Get-WinOpDiagnostics.ps1', 'scripts'), ('scripts/Optimize-WinOp.ps1', 'scripts')],
     hiddenimports=['PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'psutil', 'sqlite3', 'winreg', 'updater.in_app_updater'],
     hookspath=[],
     hooksconfig={},

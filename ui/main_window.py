@@ -143,7 +143,6 @@ class MainWindow(QMainWindow):
         self.opt_view = OptimizationView()
         self.opt_view.start_optimization.connect(self._on_execute_optimization)
         self.opt_view.view_history_requested.connect(lambda: self.switch_page(4))
-
         self.hist_view = HistoryView(db_manager=self.db)
         self.hist_view.rollback_snapshot_requested.connect(self._on_rollback_snapshot)
 
@@ -152,6 +151,7 @@ class MainWindow(QMainWindow):
         self.settings_view.start_relaunch_session.connect(self._on_start_relaunch)
         self.settings_view.check_update_requested.connect(self._on_check_update)
         self.settings_view.apply_update_requested.connect(self._on_apply_update)
+        self.opt_view.relaunch_admin_requested.connect(self.settings_view._relaunch_as_admin)
 
         self.stack.addWidget(self.dash_view)      # 0
         self.stack.addWidget(self.findings_view)  # 1

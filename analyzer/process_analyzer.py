@@ -258,7 +258,11 @@ class ProcessAnalyzer:
 
         # 4. Analyze Background Services (Gaming Services, VPNs, DBs, OEM telemetry, etc.)
         for svc in report.services_overview:
-            if svc.start_mode.lower() in ("manual", "disabled"):
+            is_manual_or_disabled = svc.start_mode.lower() in ("manual", "disabled")
+            is_running = (svc.status.lower() == "running")
+
+            # If service is already manual/disabled AND not currently running, it's already optimized
+            if is_manual_or_disabled and not is_running:
                 continue
 
             target_id = f"Service:{svc.name}"
@@ -277,18 +281,28 @@ class ProcessAnalyzer:
                 continue
 
             if eval_res.is_matched:
-                title_str = eval_res.rule.title if eval_res.rule else f"Optional Service: {svc.display_name}"
-                desc_str = eval_res.explanation
-                action_str = eval_res.recommended_action
+                if is_running and is_manual_or_disabled:
+                    title_str = f"Stop Running Service: {svc.display_name or svc.name}"
+                    desc_str = f"{eval_res.explanation} (Currently active in memory; startup is already {svc.start_mode})."
+                    action_str = "Stop running background service"
+                else:
+                    title_str = eval_res.rule.title if eval_res.rule else f"Optional Service: {svc.display_name}"
+                    desc_str = eval_res.explanation
+                    action_str = eval_res.recommended_action
                 risk_lvl = eval_res.risk_level
                 conf_val = eval_res.confidence
                 side_fx = eval_res.side_effects
                 rev_info = eval_res.reversibility_info
-            elif not svc.is_microsoft and svc.status.lower() == "running":
-                # Running third-party non-core service with Automatic start mode
-                title_str = f"Optional Third-Party Service: {svc.display_name or svc.name}"
-                desc_str = f"Third-party background service '{svc.display_name or svc.name}' is running automatically at system boot."
-                action_str = "Set service startup type to Manual"
+            elif not svc.is_microsoft and is_running:
+                # Running third-party non-core service
+                if is_manual_or_disabled:
+                    title_str = f"Stop Running Third-Party Service: {svc.display_name or svc.name}"
+                    desc_str = f"Third-party background service '{svc.display_name or svc.name}' is actively running in memory."
+                    action_str = "Stop running background service"
+                else:
+                    title_str = f"Optional Third-Party Service: {svc.display_name or svc.name}"
+                    desc_str = f"Third-party background service '{svc.display_name or svc.name}' is running automatically at system boot."
+                    action_str = "Set service startup type to Manual & Stop"
                 risk_lvl = RuleRiskLevel.CONDITIONAL
                 conf_val = 0.80
                 side_fx = "Service will start on-demand when the host application is launched."
@@ -313,10 +327,12 @@ class ProcessAnalyzer:
                 current_state={
                     "service_name": svc.name,
                     "start_mode": svc.start_mode,
+                    "status": svc.status,
                 },
                 proposed_state={
                     "service_name": svc.name,
-                    "target_mode": "Manual",
+                    "target_mode": "Manual" if not is_manual_or_disabled else svc.start_mode,
+                    "action": "stop",
                 },
                 is_protected=False,
                 is_approved=False,

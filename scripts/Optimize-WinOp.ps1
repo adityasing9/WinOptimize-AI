@@ -81,7 +81,8 @@ if ($Rollback) {
     $snaps = Get-SavedSnapshots
     if (-not $snaps -or $snaps.Count -eq 0) {
         Write-Host "[-] No previous terminal optimization snapshots found to restore." -ForegroundColor Yellow
-        exit 0
+        if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
+        return
     }
 
     Write-Host "[*] Found $($snaps.Count) saved snapshot records. Reverting..." -ForegroundColor Yellow
@@ -93,7 +94,7 @@ if ($Rollback) {
                 $startVal = if ($origMode -match "Auto") { 2 } elseif ($origMode -match "Disabled") { 4 } else { 3 }
                 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($snap.TargetName)" -Name "Start" -Value $startVal -ErrorAction SilentlyContinue
                 Set-Service -Name $snap.TargetName -StartupType $origMode -ErrorAction SilentlyContinue
-                sc.exe config "$($snap.TargetName)" start= auto | Out-Null
+                sc.exe config "$($snap.TargetName)" start= auto 2>$null | Out-Null
                 Write-Host " [RESTORED to $origMode]" -ForegroundColor Green
             }
             "ScheduledTask" {
@@ -122,7 +123,8 @@ if ($Rollback) {
     }
     Remove-Item -Path $snapshotFile -Force -ErrorAction SilentlyContinue
     Write-Host "[✓] Rollback completed successfully." -ForegroundColor Green
-    exit 0
+    if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
+    return
 }
 
 # -----------------------------------------------------------------------------
@@ -143,26 +145,28 @@ Write-Host "[*] Inspecting system state for optimization candidates..." -Foregro
 
 $candidates = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-# 1. Services
+# 1. Services & Running Service Daemons
 $knownServices = @(
-    @{ Name = "GamingServices"; Display = "Xbox Gaming Services"; Reason = "Xbox Game Pass background installer daemon" },
-    @{ Name = "GamingServicesNet"; Display = "Xbox Gaming Services Net"; Reason = "Xbox Game Pass networking helper" },
-    @{ Name = "XboxService"; Display = "Xbox Accessory Service"; Reason = "Xbox accessory background service" },
-    @{ Name = "Speedify"; Display = "Speedify VPN Service"; Reason = "Speedify channel bonding VPN resident daemon" },
-    @{ Name = "CloudflareWARP"; Display = "Cloudflare 1.1.1.1 WARP"; Reason = "WARP VPN background tunnel daemon" },
-    @{ Name = "warp-svc"; Display = "Cloudflare WARP Daemon"; Reason = "WARP client background engine" },
-    @{ Name = "MongoDB"; Display = "MongoDB Database Server"; Reason = "Local database engine configured to autostart" },
-    @{ Name = "ACCSvc"; Display = "Acer Care Center"; Reason = "OEM background telemetry service" },
-    @{ Name = "Bonjour Service"; Display = "Apple Bonjour Service"; Reason = "Apple mDNS local discovery service" }
+    @{ Name = "GamingServices"; Display = "Xbox Gaming Services"; Reason = "Xbox Game Pass background installer daemon"; ProcessNames = @("GamingServices") },
+    @{ Name = "GamingServicesNet"; Display = "Xbox Gaming Services Net"; Reason = "Xbox Game Pass networking helper"; ProcessNames = @("GamingServicesNet") },
+    @{ Name = "XboxService"; Display = "Xbox Accessory Service"; Reason = "Xbox accessory background service"; ProcessNames = @("XboxService") },
+    @{ Name = "Speedify"; Display = "Speedify VPN Service"; Reason = "Speedify channel bonding VPN resident daemon"; ProcessNames = @("Speedify", "SpeedifyService") },
+    @{ Name = "CloudflareWARP"; Display = "Cloudflare 1.1.1.1 WARP"; Reason = "WARP VPN background tunnel daemon"; ProcessNames = @("warp-svc") },
+    @{ Name = "warp-svc"; Display = "Cloudflare WARP Daemon"; Reason = "WARP client background engine"; ProcessNames = @("warp-svc") },
+    @{ Name = "MongoDB"; Display = "MongoDB Database Server"; Reason = "Local database engine configured to autostart"; ProcessNames = @("mongod") },
+    @{ Name = "ACCSvc"; Display = "Acer Care Center"; Reason = "OEM background telemetry service"; ProcessNames = @("AcerCareCenterCheck", "ACCStd") },
+    @{ Name = "Bonjour Service"; Display = "Apple Bonjour Service"; Reason = "Apple mDNS local discovery service"; ProcessNames = @("mDNSResponder") }
 )
 
 foreach ($svcMeta in $knownServices) {
     $svc = Get-Service -Name $svcMeta.Name -ErrorAction SilentlyContinue
     $isAuto = $false
     $startType = "Manual"
+    $isSvcRunning = $false
     if ($svc) {
         $startType = $svc.StartType.ToString()
         $isAuto = ($startType -eq "Automatic")
+        $isSvcRunning = ($svc.Status -eq "Running")
     }
 
     # Verify directly against registry Start value (2=Auto, 3=Manual, 4=Disabled)
@@ -177,14 +181,33 @@ foreach ($svcMeta in $knownServices) {
         }
     }
 
-    # Only flag as candidate if still configured to autostart at system boot
-    if ($isAuto) {
+    # Check if daemon process is currently running in background
+    $runningProcs = @()
+    if ($svcMeta.ProcessNames) {
+        $runningProcs = Get-Process -Name $svcMeta.ProcessNames -ErrorAction SilentlyContinue
+    }
+
+    $isProcRunning = ($runningProcs.Count -gt 0)
+
+    # Flag candidate if configured to Auto OR currently running
+    if ($isAuto -or $isProcRunning -or $isSvcRunning) {
+        $actionDesc = if ($isAuto -and ($isProcRunning -or $isSvcRunning)) {
+            "Set startup to Manual & Stop resident daemon"
+        } elseif ($isAuto) {
+            "Set startup to Manual"
+        } else {
+            "Stop running service & Terminate resident process"
+        }
+
         $candidates.Add([PSCustomObject]@{
             Category          = "Service"
             TargetName        = $svcMeta.Name
             DisplayName       = $svcMeta.Display
-            CurrentAction     = "Set startup to Manual & Stop"
+            CurrentAction     = $actionDesc
             Reason            = $svcMeta.Reason
+            ProcessNames      = $svcMeta.ProcessNames
+            IsAuto            = $isAuto
+            IsRunning         = ($isProcRunning -or $isSvcRunning)
             OriginalState     = @{ StartMode = $startType }
             RequiresElevation = $true
         })
@@ -198,7 +221,6 @@ if (Test-Path $startupKey) {
     $props = Get-ItemProperty -Path $startupKey -ErrorAction SilentlyContinue
     foreach ($appName in $knownStartups) {
         $val = $props.$appName
-        # If enabled, first byte is 0x02
         if ($val -and $val[0] -eq 2) {
             $candidates.Add([PSCustomObject]@{
                 Category          = "StartupEntry"
@@ -279,7 +301,8 @@ if ($braveProcs.Count -gt 5) {
 
 if ($candidates.Count -eq 0) {
     Write-Host "[✓] No redundant background processes, services, or tasks found! System is well-optimized." -ForegroundColor Green
-    exit 0
+    if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
+    return
 }
 
 Write-Host "`nFound $($candidates.Count) optimization candidate(s):" -ForegroundColor Green
@@ -310,17 +333,21 @@ if ($All) {
     $choice = if ($InputChoice) { $InputChoice } else { Read-Host $promptMsg }
     if ($choice -match "^[Qq]") {
         Write-Host "No changes applied. Exiting." -ForegroundColor Yellow
-        exit 0
+        if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
+        return
     }
     if ($choice -match "^[Ee]") {
         Write-Host "[*] Relaunching in elevated Administrator PowerShell window..." -ForegroundColor Cyan
         $scriptUrl = "https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1"
-        Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm $scriptUrl | iex`""
-        exit 0
+        Start-Process powershell -Verb RunAs -ArgumentList "-NoExit -ExecutionPolicy Bypass -Command `"irm $scriptUrl | iex`""
+        Write-Host "[✓] Elevated Administrator window launched. You can continue there." -ForegroundColor Green
+        if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter in this window to finish..." }
+        return
     }
     if ($choice -match "^[Rr]") {
         & $PSCommandPath -Rollback
-        exit 0
+        if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
+        return
     }
     if ($choice -match "^[Aa]") {
         for ($i = 0; $i -lt $candidates.Count; $i++) { $selectedIndices += $i }
@@ -337,7 +364,8 @@ if ($All) {
 
 if ($selectedIndices.Count -eq 0) {
     Write-Host "No valid candidates selected. Exiting." -ForegroundColor Yellow
-    exit 0
+    if (-not $All -and -not [Console]::IsInputRedirected) { Read-Host "Press Enter to exit..." }
+    return
 }
 
 Write-Host "`nApplying selected optimizations with automatic safety backup..." -ForegroundColor Cyan
@@ -359,13 +387,23 @@ foreach ($idx in $selectedIndices) {
         "Service" {
             # 1. Capture snapshot
             Save-SnapshotRecord -Record $snapRecord
-            # 2. Reconfigure service (Direct attempt)
+
+            # 2. Reconfigure service startup mode & stop resident instances
             Set-Service -Name $c.TargetName -StartupType Manual -ErrorAction SilentlyContinue
             Stop-Service -Name $c.TargetName -Force -ErrorAction SilentlyContinue
             sc.exe config "$($c.TargetName)" start= demand 2>$null | Out-Null
             net stop "$($c.TargetName)" 2>$null | Out-Null
+            sc.exe stop "$($c.TargetName)" 2>$null | Out-Null
             Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value 3 -Type DWord -ErrorAction SilentlyContinue
-            taskkill.exe /F /IM "$($c.TargetName).exe" 2>$null | Out-Null
+
+            # Terminate corresponding resident daemon process(es)
+            if ($c.ProcessNames) {
+                foreach ($pn in $c.ProcessNames) {
+                    taskkill.exe /F /T /IM "$pn.exe" 2>$null | Out-Null
+                }
+            } else {
+                taskkill.exe /F /T /IM "$($c.TargetName).exe" 2>$null | Out-Null
+            }
 
             # 3. Check verification
             $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
@@ -380,13 +418,23 @@ foreach ($idx in $selectedIndices) {
             # 4. If failed because not running as admin, trigger single elevated UAC execution
             if (-not $isDone) {
                 Write-Host " [Admin UAC]..." -NoNewline -ForegroundColor Yellow
+                $killCommands = ""
+                if ($c.ProcessNames) {
+                    foreach ($pn in $c.ProcessNames) {
+                        $killCommands += "`ntaskkill.exe /F /T /IM '$pn.exe' 2>`$null"
+                    }
+                } else {
+                    $killCommands = "`ntaskkill.exe /F /T /IM '$($c.TargetName).exe' 2>`$null"
+                }
+
                 $elevScript = @"
 Set-Service -Name '$($c.TargetName)' -StartupType Manual -ErrorAction SilentlyContinue
 Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue
 & sc.exe config '$($c.TargetName)' start= demand
 & net stop '$($c.TargetName)'
+& sc.exe stop '$($c.TargetName)'
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value 3 -Type DWord -ErrorAction SilentlyContinue
-taskkill.exe /F /IM "$($c.TargetName).exe" 2>`$null
+$killCommands
 "@
                 $null = Invoke-ElevatedPowerShell -Script $elevScript
                 $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
@@ -486,3 +534,7 @@ Write-Host "Backup snapshot saved to: $snapshotFile" -ForegroundColor DarkGray
 Write-Host "To undo any of these changes at any time, run:" -ForegroundColor Cyan
 Write-Host "   irm https://raw.githubusercontent.com/adityasing9/WinOptimize-AI/main/scripts/Optimize-WinOp.ps1 | iex -Rollback" -ForegroundColor White
 Write-Host "==========================================================`n" -ForegroundColor Green
+
+if (-not $All -and -not [Console]::IsInputRedirected) {
+    Read-Host "Optimization session completed. Press Enter to exit..."
+}

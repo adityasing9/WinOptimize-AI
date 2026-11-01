@@ -19,6 +19,7 @@ class OptimizationView(QWidget):
     """View executing approved optimizations with live verification reporting."""
     start_optimization = Signal(list)  # (List[OptimizationRecommendation])
     view_history_requested = Signal()
+    relaunch_admin_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -42,6 +43,20 @@ class OptimizationView(QWidget):
         top_layout.addLayout(title_box)
 
         top_layout.addStretch()
+
+        import ctypes
+        is_admin = False
+        try:
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            pass
+
+        if not is_admin:
+            self.elev_btn = QPushButton("🛡️ Relaunch as Admin")
+            self.elev_btn.setProperty("class", "SecondaryButton")
+            self.elev_btn.setToolTip("Relaunch WinOptimize AI as Administrator to apply scheduled tasks and services without permission issues.")
+            self.elev_btn.clicked.connect(self.relaunch_admin_requested.emit)
+            top_layout.addWidget(self.elev_btn)
 
         self.apply_btn = QPushButton("Apply Optimizations Now")
         self.apply_btn.setProperty("class", "PrimaryButton")

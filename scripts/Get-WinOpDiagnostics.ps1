@@ -444,45 +444,60 @@ function Get-ServiceInspection {
 
     # Attempt 2: Fallback to HKLM Registry if CIM was inaccessible
     if (-not $usedCim) {
-        $svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services"
-        $svcEntries = Get-ChildItem -Path $svcKey -ErrorAction SilentlyContinue
-        foreach ($entry in $svcEntries) {
-            $props = Get-ItemProperty -Path $entry.PSPath -ErrorAction SilentlyContinue
-            if ($props.ImagePath -and $props.Start -ne $null) {
-                # Start: 0=Boot, 1=System, 2=Automatic, 3=Manual, 4=Disabled
-                $startModeStr = switch ($props.Start) {
-                    0 { "Boot" }
-                    1 { "System" }
-                    2 { "Auto" }
-                    3 { "Manual" }
-                    4 { "Disabled" }
-                    default { "Unknown ($($props.Start))" }
-                }
+        $regServices = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("SYSTEM\CurrentControlSet\Services")
+        if ($regServices) {
+            $svcSubNames = $regServices.GetSubKeyNames()
+            foreach ($sName in $svcSubNames) {
+                try {
+                    $sKey = $regServices.OpenSubKey($sName)
+                    if ($sKey) {
+                        $img = [string]$sKey.GetValue("ImagePath")
+                        $startVal = $sKey.GetValue("Start")
+                        if ($img -and $startVal -ne $null) {
+                            $startModeStr = switch ($startVal) {
+                                0 { "Boot" }
+                                1 { "System" }
+                                2 { "Auto" }
+                                3 { "Manual" }
+                                4 { "Disabled" }
+                                default { "Unknown ($startVal)" }
+                            }
+                            $disp = [string]$sKey.GetValue("DisplayName")
+                            if (-not $disp) { $disp = $sName }
+                            $acct = [string]$sKey.GetValue("ObjectName")
 
-                $img = [string]$props.ImagePath
-                $disp = if ($props.DisplayName) { [string]$props.DisplayName } else { $entry.PSChildName }
-                $acct = if ($props.ObjectName) { [string]$props.ObjectName } else { "" }
+                            $isCoreWindows = $false
+                            if ($img -match "system32|syswow64") {
+                                if ($sName -notmatch "GamingServices|Xbox" -and $disp -notmatch "Gaming|Xbox") {
+                                    $isCoreWindows = $true
+                                }
+                            }
+                            $isMicrosoft = $isCoreWindows
 
-                $isCoreWindows = $false
-                if ($img -match "system32|syswow64") {
-                    if ($entry.PSChildName -notmatch "GamingServices|Xbox" -and $disp -notmatch "Gaming|Xbox") {
-                        $isCoreWindows = $true
+                            if (-not $IncludeSystem -and $isCoreWindows) { continue }
+
+                            # Try checking running status
+                            $svcStatus = "Unknown (Registry)"
+                            try {
+                                $liveSvc = Get-Service -Name $sName -ErrorAction SilentlyContinue
+                                if ($liveSvc) {
+                                    $svcStatus = $liveSvc.Status.ToString()
+                                }
+                            } catch { }
+
+                            $serviceList.Add([PSCustomObject]@{
+                                Name         = $sName
+                                DisplayName  = $disp
+                                Status       = $svcStatus
+                                StartMode    = $startModeStr
+                                BinaryPath   = $img
+                                Account      = $acct
+                                IsMicrosoft  = $isMicrosoft
+                                Source       = "RegistryFallback"
+                            })
+                        }
                     }
-                }
-                $isMicrosoft = $isCoreWindows
-
-                if (-not $IncludeSystem -and $isCoreWindows) { continue }
-
-                $serviceList.Add([PSCustomObject]@{
-                    Name         = $entry.PSChildName
-                    DisplayName  = $disp
-                    Status       = "Unknown (Registry)"
-                    StartMode    = $startModeStr
-                    BinaryPath   = $img
-                    Account      = $acct
-                    IsMicrosoft  = $isMicrosoft
-                    Source       = "RegistryFallback"
-                })
+                } catch { }
             }
         }
     }
@@ -585,6 +600,7 @@ function Get-OptimizationCandidates {
             $isKnownOptional = ($svc.Name -match "GamingServices|Xbox|Speedify|MongoDB|warp|Bonjour|ACCSvc" -or 
                                 $svc.DisplayName -match "Gaming Services|Xbox|Speedify|MongoDB|WARP|Bonjour|Acer Care")
             if ($isKnownOptional -or ($svc.Status -eq "Running" -and $svc.StartMode -eq "Auto")) {
+                $recAct = if ($svc.StartMode -eq "Auto") { "Set service startup type to Manual (Set-Service -StartupType Manual) & Stop" } else { "Stop running background service (Stop-Service)" }
                 $candidates.Add([PSCustomObject]@{
                     Category          = "Service"
                     TargetName        = $svc.DisplayName
@@ -592,7 +608,7 @@ function Get-OptimizationCandidates {
                     RiskLevel         = "CONDITIONAL"
                     Confidence        = 0.85
                     Reason            = "Background service '$($svc.DisplayName)' is running or configured to autostart at system boot."
-                    RecommendedAction = "Set service startup type to Manual (Set-Service -StartupType Manual)"
+                    RecommendedAction = $recAct
                     OriginalCommand   = $svc.BinaryPath
                     RequiresElevation = $true
                 })
@@ -652,8 +668,8 @@ $report = [PSCustomObject]@{
     OptimizationCandidates = $candidateList
     StartupEntries         = $startupList
     ScheduledTasks         = $taskList
-    TopProcesses           = ($procList | Select-Object -First 20)
-    ServicesOverview       = ($svcList | Select-Object -First 30)
+    TopProcesses           = $procList
+    ServicesOverview       = $svcList
 }
 
 # Print Summary Table
