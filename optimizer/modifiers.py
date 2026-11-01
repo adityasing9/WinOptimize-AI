@@ -402,13 +402,16 @@ class ServiceModifier(BaseModifier):
         if rc_sc == 0 and self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode}):
             return True
 
-        # 3. Elevated fallback via UAC
+        # 3. Elevated fallback via UAC (including direct registry write for ACL-locked services like GamingServices)
+        reg_val = 3 if target_mode.lower() in ("manual", "demand") else (4 if target_mode.lower() == "disabled" else 2)
         elev_script = f"""
 try {{
     Set-Service -Name '{svc_name}' -StartupType {target_mode} -ErrorAction Stop
 }} catch {{
     & sc.exe config "{svc_name}" start= {sc_mode}
 }}
+Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\{svc_name}" -Name "Start" -Value {reg_val} -ErrorAction SilentlyContinue
+taskkill.exe /F /IM "{svc_name}.exe" 2>$null
 """
         self._run_elevated_ps(elev_script)
         return self.verify_state(target_identifier, {"service_name": svc_name, "start_mode": target_mode})
@@ -425,6 +428,20 @@ try {{
             elif expected_mode in ("auto", "automatic"):
                 return curr in ("auto", "automatic")
             return curr == expected_mode
+
+        # Direct registry verification check (essential for ACL-locked services like GamingServices)
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"SYSTEM\\CurrentControlSet\\Services\\{svc_name}", 0, winreg.KEY_READ) as k:
+                val, _ = winreg.QueryValueEx(k, "Start")
+                if expected_mode in ("manual", "demand") and val in (3, 4):
+                    return True
+                elif expected_mode in ("auto", "automatic") and val == 2:
+                    return True
+                elif expected_mode == "disabled" and val == 4:
+                    return True
+        except Exception:
+            pass
 
         # Fallback query via sc.exe qc
         sc_cmd = f'sc.exe qc "{svc_name}"'

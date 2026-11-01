@@ -90,14 +90,20 @@ if ($Rollback) {
         switch ($snap.Category) {
             "Service" {
                 $origMode = if ($snap.OriginalState.StartMode) { $snap.OriginalState.StartMode } else { "Auto" }
+                $startVal = if ($origMode -match "Auto") { 2 } elseif ($origMode -match "Disabled") { 4 } else { 3 }
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($snap.TargetName)" -Name "Start" -Value $startVal -ErrorAction SilentlyContinue
                 Set-Service -Name $snap.TargetName -StartupType $origMode -ErrorAction SilentlyContinue
                 sc.exe config "$($snap.TargetName)" start= auto | Out-Null
                 Write-Host " [RESTORED to $origMode]" -ForegroundColor Green
             }
             "ScheduledTask" {
                 $taskPath = if ($snap.OriginalState.TaskPath) { $snap.OriginalState.TaskPath } else { "\" }
-                Enable-ScheduledTask -TaskName $snap.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue
-                schtasks.exe /change /tn "$($snap.TargetName)" /enable | Out-Null
+                if (-not $taskPath.EndsWith("\")) { $taskPath = "$taskPath\" }
+                $fullPath = if ($taskPath -eq "\") { "\$($snap.TargetName)" } else { "$taskPath$($snap.TargetName)" }
+                Enable-ScheduledTask -TaskName $snap.TargetName -TaskPath $taskPath -ErrorAction SilentlyContinue | Out-Null
+                schtasks.exe /change /tn "$fullPath" /enable 2>$null | Out-Null
+                Write-Host " [RE-ENABLED]" -ForegroundColor Green
+            }
                 Write-Host " [RE-ENABLED]" -ForegroundColor Green
             }
             "StartupEntry" {
@@ -360,6 +366,8 @@ foreach ($idx in $selectedIndices) {
             Stop-Service -Name $c.TargetName -Force -ErrorAction SilentlyContinue
             sc.exe config "$($c.TargetName)" start= demand 2>$null | Out-Null
             net stop "$($c.TargetName)" 2>$null | Out-Null
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value 3 -Type DWord -ErrorAction SilentlyContinue
+            taskkill.exe /F /IM "$($c.TargetName).exe" 2>$null | Out-Null
 
             # 3. Check verification
             $regProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
@@ -379,6 +387,8 @@ Set-Service -Name '$($c.TargetName)' -StartupType Manual -ErrorAction SilentlyCo
 Stop-Service -Name '$($c.TargetName)' -Force -ErrorAction SilentlyContinue
 & sc.exe config '$($c.TargetName)' start= demand
 & net stop '$($c.TargetName)'
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -Name "Start" -Value 3 -Type DWord -ErrorAction SilentlyContinue
+taskkill.exe /F /IM "$($c.TargetName).exe" 2>`$null
 "@
                 $null = Invoke-ElevatedPowerShell -Script $elevScript
                 $regProps2 = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($c.TargetName)" -ErrorAction SilentlyContinue
