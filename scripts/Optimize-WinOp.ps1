@@ -104,8 +104,6 @@ if ($Rollback) {
                 schtasks.exe /change /tn "$fullPath" /enable 2>$null | Out-Null
                 Write-Host " [RE-ENABLED]" -ForegroundColor Green
             }
-                Write-Host " [RE-ENABLED]" -ForegroundColor Green
-            }
             "StartupEntry" {
                 $enabledBytes = [byte[]](0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
                 $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
